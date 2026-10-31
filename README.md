@@ -1,34 +1,23 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# tabSync
 
-## Getting Started
+Move Chrome tabs between the desktop and the phone.
 
-First, run the development server:
+- **Desktop → phone**: the **TabSync** Android app (`mobile/`). It lists the desktop
+  Chrome's open tabs (from `GET /api/tabs` on this backend, `10.7.0.2:3185` over
+  WireGuard) and opens them all — or one — in the phone's Chrome, each in its own tab.
+- **Phone → desktop**: `phoneTabsToDesktop [--dry-run]` in any terminal
+  (`scripts/phone-to-desktop.mjs`, via adb + phone Chrome's DevTools socket).
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+Both directions share one filter, `lib/tabs.mjs`: **solitaire, dashboard and WhatsApp
+tabs stay put**, as do non-web pages; `localhost` URLs become `10.7.0.2` for the phone.
+Dashboard ports come from the daemon (`getPort dashboard-dev|prod`).
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Tabs are read with DevTools `/json/list` and opened with `PUT /json/new` — never
+`setDownloadBehavior` (it breaks Chrome's download buttons).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Config (gitignored)
+- `.env.local`: `TABSYNC_API_TOKEN=<secret>`
+- `mobile/.env`: `API_BASE_URL=http://10.7.0.2:3185/` and `API_TOKEN=<same secret>`
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Build/install: `cd mobile && ./gradlew assembleDevDebug` then
+`adb -s 10.7.0.3:5555 install -r app/build/outputs/apk/dev/debug/app-dev-debug.apk`.
