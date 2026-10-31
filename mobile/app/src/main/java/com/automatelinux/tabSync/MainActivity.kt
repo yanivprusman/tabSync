@@ -8,9 +8,15 @@ import android.os.Bundle
 import android.provider.Browser
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import android.graphics.BitmapFactory
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.net.HttpURLConnection
@@ -19,8 +25,17 @@ import java.net.URL
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        setContent { App(AndroidPlatform(this)) }
+        // Dark navy UI: force light system-bar icons whatever the phone's day/night setting.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
+        val heebo = FontFamily(
+            Font(R.font.heebo_regular, FontWeight.Normal),
+            Font(R.font.heebo_medium, FontWeight.Medium),
+            Font(R.font.heebo_bold, FontWeight.Bold),
+        )
+        setContent { App(AndroidPlatform(this), heebo) }
     }
 }
 
@@ -65,12 +80,22 @@ class AndroidPlatform(private val context: Context) : Platform {
 
     override fun open(url: String) = start(intentFor(url, 0))
 
-    override suspend fun openAll(urls: List<String>) {
+    /**
+     * All intents go out in ONE synchronous burst, while this app is still in the
+     * foreground. The first one brings Chrome to the front; from then on this app
+     * is in the background, and Android's background-activity-start rules silently
+     * drop further startActivity calls (measured: with a 350 ms gap, only 2 of 5
+     * tabs opened). Chrome queues a burst fine.
+     */
+    override suspend fun openAll(urls: List<String>, onOpened: (Int) -> Unit) {
         urls.forEachIndexed { i, url ->
             start(intentFor(url, i))
-            delay(350) // let Chrome take each intent before the next one lands
+            onOpened(i + 1)
         }
     }
+
+    override fun decodeImage(bytes: ByteArray): ImageBitmap? =
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
 
     private fun start(intent: Intent) {
         try {

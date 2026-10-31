@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Compose draws the UI; the Activity theme just needs to be a no-action-bar
-         theme that doesn't require the appcompat/material XML libraries. -->
-    <style name="Theme.App" parent="android:Theme.Material.Light.NoActionBar">
+    <!-- Compose draws the UI. The window background is the app's navy so launch
+         never flashes white before the first frame. -->
+    <style name="Theme.App" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/tabsync_bg</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>

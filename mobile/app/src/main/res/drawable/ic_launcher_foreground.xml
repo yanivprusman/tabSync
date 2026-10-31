@@ -1,5 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- tabSync mark: a desktop monitor with a tab strip, and a phone in front of it
+     showing the same (teal) tab — the tab that travels between them. 108dp grid,
+     art kept inside the 72dp visible area. Source: mobile/icon/tabsync.svg -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#FFFFFF" android:pathData="M38,38 h32 a6,6 0 0 1 6,6 v20 a6,6 0 0 1 -6,6 h-32 a6,6 0 0 1 -6,-6 v-20 a6,6 0 0 1 6,-6 z" />
-    <path android:fillColor="#B2DFDB" android:pathData="M46,48 h16 v4 h-16 z M46,56 h16 v4 h-16 z" />
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M26,31.8 H68 A4,4 0 0 1 72,35.8 V61.8 A4,4 0 0 1 68,65.8 H26 A4,4 0 0 1 22,61.8 V35.8 A4,4 0 0 1 26,31.8 Z" android:fillColor="#FF000000" android:fillAlpha="0.35"/>
+    <path android:pathData="M26,30 H68 A4,4 0 0 1 72,34 V60 A4,4 0 0 1 68,64 H26 A4,4 0 0 1 22,60 V34 A4,4 0 0 1 26,30 Z" android:fillColor="#FFE8EEFF"/>
+    <path android:pathData="M42,64 H52 V70 H42 Z" android:fillColor="#FFC9D4F5"/>
+    <path android:pathData="M36.75,70 H57.25 A1.75,1.75 0 0 1 59,71.75 V71.75 A1.75,1.75 0 0 1 57.25,73.5 H36.75 A1.75,1.75 0 0 1 35,71.75 V71.75 A1.75,1.75 0 0 1 36.75,70 Z" android:fillColor="#FFC9D4F5"/>
+    <path android:pathData="M26,39 q2,0 2,-2 v-2 q0,-2 2,-2 h8 q2,0 2,2 v2 q0,2 2,2 z" android:fillColor="#FF2B3990"/>
+    <path android:pathData="M40,39 q2,0 2,-2 v-2 q0,-2 2,-2 h8 q2,0 2,2 v2 q0,2 2,2 z" android:fillColor="#FF4FD1C5"/>
+    <path android:pathData="M27.5,39 H66.5 A1.5,1.5 0 0 1 68,40.5 V58.5 A1.5,1.5 0 0 1 66.5,60 H27.5 A1.5,1.5 0 0 1 26,58.5 V40.5 A1.5,1.5 0 0 1 27.5,39 Z" android:fillColor="#FF2B3990"/>
+    <path android:pathData="M66,44.2 H80 A6,6 0 0 1 86,50.2 V80.2 A6,6 0 0 1 80,86.2 H66 A6,6 0 0 1 60,80.2 V50.2 A6,6 0 0 1 66,44.2 Z" android:fillColor="#FF000000" android:fillAlpha="0.4"/>
+    <path android:pathData="M66,42 H80 A6,6 0 0 1 86,48 V78 A6,6 0 0 1 80,84 H66 A6,6 0 0 1 60,78 V48 A6,6 0 0 1 66,42 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="60" android:startY="42" android:endX="86" android:endY="84">
+                <item android:offset="0" android:color="#FF7DF0DF"/>
+                <item android:offset="1" android:color="#FF1FA6C4"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M66.0,48 H80.0 A2.5,2.5 0 0 1 82.5,50.5 V75.5 A2.5,2.5 0 0 1 80.0,78 H66.0 A2.5,2.5 0 0 1 63.5,75.5 V50.5 A2.5,2.5 0 0 1 66.0,48 Z" android:fillColor="#FF0E1440"/>
+    <path android:pathData="M66,54 q1.5,0 1.5,-1.5 v-1 q0,-1.5 1.5,-1.5 h6 q1.5,0 1.5,1.5 v1 q0,1.5 1.5,1.5 z" android:fillColor="#FF6EE7D8"/>
+    <path android:pathData="M67.2,54 H78.8 A1.2,1.2 0 0 1 80,55.2 V72.8 A1.2,1.2 0 0 1 78.8,74 H67.2 A1.2,1.2 0 0 1 66,72.8 V55.2 A1.2,1.2 0 0 1 67.2,54 Z" android:fillColor="#FF6EE7D8"/>
 </vector>

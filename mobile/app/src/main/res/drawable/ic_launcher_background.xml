@@ -1,4 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- tabSync mark: a desktop monitor with a tab strip, and a phone in front of it
+     showing the same (teal) tab — the tab that travels between them. 108dp grid,
+     art kept inside the 72dp visible area. Source: mobile/icon/tabsync.svg -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#00796B" android:pathData="M0,0h108v108h-108z" />
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M0,0 H108 V108 H0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="108" android:endY="108">
+                <item android:offset="0" android:color="#FF2B3990"/>
+                <item android:offset="1" android:color="#FF0E1440"/>
+            </gradient>
+        </aapt:attr>
+    </path>
 </vector>

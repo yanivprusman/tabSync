@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- tabSync mark: a desktop monitor with a tab strip, and a phone in front of it
+     showing the same (teal) tab — the tab that travels between them. 108dp grid,
+     art kept inside the 72dp visible area. Source: mobile/icon/tabsync.svg -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillType="evenOdd" android:fillColor="#FF000000" android:pathData="M26,30 H68 A4,4 0 0 1 72,34 V60 A4,4 0 0 1 68,64 H26 A4,4 0 0 1 22,60 V34 A4,4 0 0 1 26,30 Z M27.5,39 H66.5 A1.5,1.5 0 0 1 68,40.5 V58.5 A1.5,1.5 0 0 1 66.5,60 H27.5 A1.5,1.5 0 0 1 26,58.5 V40.5 A1.5,1.5 0 0 1 27.5,39 Z M26,39 q2,0 2,-2 v-2 q0,-2 2,-2 h8 q2,0 2,2 v2 q0,2 2,2 z"/>
+    <path android:fillColor="#FF000000" android:pathData="M42,64 H52 V70 H42 Z M36.75,70 H57.25 A1.75,1.75 0 0 1 59,71.75 V71.75 A1.75,1.75 0 0 1 57.25,73.5 H36.75 A1.75,1.75 0 0 1 35,71.75 V71.75 A1.75,1.75 0 0 1 36.75,70 Z"/>
+    <path android:fillType="evenOdd" android:fillColor="#FF000000" android:pathData="M66,42 H80 A6,6 0 0 1 86,48 V78 A6,6 0 0 1 80,84 H66 A6,6 0 0 1 60,78 V48 A6,6 0 0 1 66,42 Z M66.0,48 H80.0 A2.5,2.5 0 0 1 82.5,50.5 V75.5 A2.5,2.5 0 0 1 80.0,78 H66.0 A2.5,2.5 0 0 1 63.5,75.5 V50.5 A2.5,2.5 0 0 1 66.0,48 Z"/>
+    <path android:fillColor="#FF000000" android:pathData="M66,54 q1.5,0 1.5,-1.5 v-1 q0,-1.5 1.5,-1.5 h6 q1.5,0 1.5,1.5 v1 q0,1.5 1.5,1.5 z M67.2,54 H78.8 A1.2,1.2 0 0 1 80,55.2 V72.8 A1.2,1.2 0 0 1 78.8,74 H67.2 A1.2,1.2 0 0 1 66,72.8 V55.2 A1.2,1.2 0 0 1 67.2,54 Z"/>
+</vector>
