@@ -1,0 +1,7 @@
+{
+  "description": "tabSync — open all your desktop Chrome tabs on the phone (and phoneTabsToDesktop for the other way)",
+  "icon": "Columns2",
+  "sharedLibs": [
+    "android-feedback-lib"
+  ]
+}
