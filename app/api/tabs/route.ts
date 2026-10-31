@@ -1,5 +1,4 @@
 import { authorize } from "@/lib/auth";
-// @ts-expect-error -- plain ESM shared with the phoneTabsToDesktop CLI
 import { desktopTabsForPhone } from "@/lib/tabs.mjs";
 
 // GET /api/tabs — the desktop Chrome's open tabs, minus solitaire / dashboard /

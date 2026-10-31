@@ -19,7 +19,11 @@ val gitShortHash = providers.exec {
 val envFile = rootProject.file(".env")
 val envProps = Properties()
 if (envFile.exists()) envFile.inputStream().use { envProps.load(it) }
-val apiBaseUrl = envProps.getProperty("API_BASE_URL", "http://10.7.0.1:3185/")
+// The tabs live in the DESKTOP's Chrome, so the backend is the desktop (10.7.0.2), not the leader.
+val apiBaseUrl = envProps.getProperty("API_BASE_URL")
+    ?: throw GradleException("mobile/.env must set API_BASE_URL (e.g. http://10.7.0.2:3185/)")
+val apiToken = envProps.getProperty("API_TOKEN")
+    ?: throw GradleException("mobile/.env must set API_TOKEN (= TABSYNC_API_TOKEN in the backend's .env.local)")
 
 android {
     namespace = "com.automatelinux.tabSync"
@@ -32,6 +36,7 @@ android {
         versionCode = gitCommitCount
         versionName = "v${gitCommitCount} (${gitShortHash})"
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+        buildConfigField("String", "API_TOKEN", "\"$apiToken\"")
     }
 
     buildTypes {
@@ -60,6 +65,7 @@ dependencies {
     // Shared KMP module (commonMain code shared with iOS)
     implementation(project(":shared"))
     implementation(libs.kotlinx.datetime)
+    implementation(libs.kotlinx.serialization.json)
     implementation(libs.multiplatform.settings)
 
     // Compose BOM
