@@ -9,6 +9,9 @@ export async function GET(request: Request) {
   try {
     return Response.json(await desktopTabsForPhone());
   } catch (e) {
-    return Response.json({ error: (e as Error).message }, { status: 502 });
+    // `reason` (ChromeUnavailable) tells the phone the desktop answered and WHAT
+    // is wrong on it — so it never shows a network error for a closed Chrome.
+    const err = e as Error & { reason?: string };
+    return Response.json({ error: err.message, reason: err.reason ?? "desktop-error" }, { status: 502 });
   }
 }

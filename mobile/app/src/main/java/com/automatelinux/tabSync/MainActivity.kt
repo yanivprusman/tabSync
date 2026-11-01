@@ -19,6 +19,8 @@ import androidx.compose.ui.text.font.FontWeight
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -53,14 +55,20 @@ class AndroidPlatform(private val context: Context) : Platform {
             val body = (if (code in 200..299) conn.inputStream else conn.errorStream)
                 ?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code !in 200..299) {
-                val msg = runCatching {
-                    json.parseToJsonElement(body).let { (it as kotlinx.serialization.json.JsonObject)["error"] }
-                }.getOrNull()?.toString()?.trim('"')
-                throw IllegalStateException("Desktop answered HTTP $code${msg?.let { ": $it" } ?: ""}")
+                val obj = runCatching { json.parseToJsonElement(body) as JsonObject }.getOrNull()
+                val msg = (obj?.get("error") as? JsonPrimitive)?.content
+                val reason = (obj?.get("reason") as? JsonPrimitive)?.content
+                throw LoadFailure(
+                    if (code == 401) FailureKind.Desktop else FailureKind.fromReason(reason),
+                    msg ?: "Desktop answered HTTP $code",
+                )
             }
             json.decodeFromString(TabList.serializer(), body)
         } catch (e: java.io.IOException) {
-            throw IllegalStateException("Can't reach the desktop at ${BuildConfig.API_BASE_URL} — is WireGuard on? (${e.message})")
+            throw LoadFailure(
+                FailureKind.Offline,
+                "No answer from ${BuildConfig.API_BASE_URL} — is WireGuard on, and is the desktop awake? (${e.message})",
+            )
         } finally {
             conn.disconnect()
         }

@@ -43,9 +43,11 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Chat
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Dashboard
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Style
+import androidx.compose.material.icons.rounded.WebAssetOff
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -99,6 +101,33 @@ data class Skipped(val title: String, val reason: String)
 @Serializable
 data class TabList(val tabs: List<Tab> = emptyList(), val skipped: List<Skipped> = emptyList())
 
+/**
+ * Why loading failed — WHICH link broke. "Can't reach the desktop" is only true
+ * for [Offline]; for the others the desktop answered and is telling us what is
+ * wrong on its side, so the screen must say that instead.
+ */
+enum class FailureKind {
+    /** No answer from the desktop at all (WireGuard down, desktop off, server down). */
+    Offline,
+    /** The desktop answered: its everyday Chrome is not running. */
+    ChromeClosed,
+    /** The desktop answered: Chrome runs, but without the DevTools port. */
+    ChromeNoDebugging,
+    /** The desktop answered with some other error. */
+    Desktop;
+
+    companion object {
+        /** Maps the server's `reason` field. */
+        fun fromReason(reason: String?): FailureKind = when (reason) {
+            "chrome-closed" -> ChromeClosed
+            "chrome-no-debugging" -> ChromeNoDebugging
+            else -> Desktop
+        }
+    }
+}
+
+class LoadFailure(val kind: FailureKind, message: String) : Exception(message)
+
 /** What the platform supplies. */
 interface Platform {
     suspend fun loadTabs(): TabList
@@ -128,7 +157,7 @@ private object C {
 private sealed interface State {
     data object Loading : State
     data class Loaded(val list: TabList, val at: String) : State
-    data class Failed(val message: String) : State
+    data class Failed(val kind: FailureKind, val message: String) : State
 }
 
 private fun nowHm(): String {
@@ -159,8 +188,10 @@ private fun TabsScreen(platform: Platform, font: FontFamily) {
         val started = Clock.System.now()
         val next = try {
             State.Loaded(platform.loadTabs(), nowHm())
+        } catch (e: LoadFailure) {
+            State.Failed(e.kind, e.message ?: e.kind.name)
         } catch (e: Exception) {
-            State.Failed(e.message ?: e.toString())
+            State.Failed(FailureKind.Desktop, e.message ?: e.toString())
         }
         // A refresh that answers in 20 ms looks ignored — hold the spinner long enough to read.
         val spent = (Clock.System.now() - started).inWholeMilliseconds
@@ -188,7 +219,7 @@ private fun TabsScreen(platform: Platform, font: FontFamily) {
                 item { Header(state, t, onRefresh = { scope.launch { load(userPulled = true) } }) }
                 when (val s = state) {
                     is State.Loading -> items(4) { SkeletonCard() }
-                    is State.Failed -> item { ErrorCard(s.message, t) { scope.launch { load(false) } } }
+                    is State.Failed -> item { ErrorCard(s.kind, s.message, t) { scope.launch { load(false) } } }
                     is State.Loaded -> {
                         if (s.list.tabs.isEmpty()) item { EmptyCard(t) }
                         items(s.list.tabs, key = { it.url }) { tab ->
@@ -276,7 +307,10 @@ private fun Header(state: State, t: TextStyles, onRefresh: () -> Unit) {
                     }
                     is State.Failed -> {
                         Text("—", style = t.hero)
-                        Text("Not connected", style = t.sub)
+                        Text(
+                            if (s.kind == FailureKind.Offline) "Not connected" else "Connected · can't read Chrome",
+                            style = t.sub,
+                        )
                     }
                     is State.Loaded -> {
                         val n = s.list.tabs.size
@@ -413,16 +447,31 @@ private fun SkeletonCard() {
 }
 
 @Composable
-private fun ErrorCard(message: String, t: TextStyles, onRetry: () -> Unit) {
+private fun ErrorCard(kind: FailureKind, message: String, t: TextStyles, onRetry: () -> Unit) {
+    val icon = when (kind) {
+        FailureKind.Offline -> Icons.Rounded.WifiOff
+        FailureKind.ChromeClosed, FailureKind.ChromeNoDebugging -> Icons.Rounded.WebAssetOff
+        FailureKind.Desktop -> Icons.Rounded.ErrorOutline
+    }
+    val title = when (kind) {
+        FailureKind.Offline -> "Can't reach the desktop"
+        FailureKind.ChromeClosed -> "Chrome is closed on the desktop"
+        FailureKind.ChromeNoDebugging -> "Chrome on the desktop isn't sharing its tabs"
+        FailureKind.Desktop -> "The desktop couldn't list its tabs"
+    }
+    val body = when (kind) {
+        FailureKind.ChromeClosed -> "The desktop is reachable — there are just no tabs to read. Open Chrome there, then try again."
+        else -> message
+    }
     Column(
         Modifier.fillMaxWidth().padding(16.dp).clip(RoundedCornerShape(20.dp)).background(C.card)
             .border(1.dp, C.cardEdge, RoundedCornerShape(20.dp)).padding(22.dp),
     ) {
-        Icon(Icons.Rounded.WifiOff, null, tint = C.error, modifier = Modifier.size(30.dp))
+        Icon(icon, null, tint = C.error, modifier = Modifier.size(30.dp))
         Spacer(Modifier.height(12.dp))
-        Text("Can't reach the desktop", style = t.h2)
+        Text(title, style = t.h2)
         Spacer(Modifier.height(6.dp))
-        Text(message, style = t.body)
+        Text(body, style = t.body)
         Spacer(Modifier.height(18.dp))
         Box(
             Modifier.clip(RoundedCornerShape(50)).background(C.chip).clickable(onClick = onRetry)
