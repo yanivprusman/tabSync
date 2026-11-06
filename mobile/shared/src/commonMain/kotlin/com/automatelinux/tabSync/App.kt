@@ -52,6 +52,8 @@ import androidx.compose.material.icons.rounded.WebAssetOff
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -82,6 +84,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.automatelinux.tabSync.ui.theme.AppTheme
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
@@ -136,6 +139,8 @@ class LoadFailure(val kind: FailureKind, message: String) : Exception(message)
 interface Platform {
     suspend fun loadTabs(): TabList
     suspend fun loadSound(): SoundStatus
+    /** Moves the computer's sound; answers with where it ended up. */
+    suspend fun setSound(onPhone: Boolean): SoundStatus
     fun open(url: String)
     /** Opens each URL in its own browser tab; [onOpened] gets the count so far. */
     suspend fun openAll(urls: List<String>, onOpened: (Int) -> Unit)
@@ -171,42 +176,38 @@ private sealed interface Sound {
     data class Failed(val kind: FailureKind, val message: String) : Sound
 }
 
+/** How often the sound line re-reads the desktop while the app is on screen. */
+private const val SOUND_POLL_MS = 3000L
+
 private fun nowHm(): String {
     val t = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
     return "${t.hour.toString().padStart(2, '0')}:${t.minute.toString().padStart(2, '0')}"
 }
 
 @Composable
-fun App(platform: Platform, font: FontFamily = FontFamily.Default) {
+fun App(platform: Platform, font: FontFamily = FontFamily.Default, onScreen: Boolean = true) {
     AppTheme {
         Box(
             Modifier.fillMaxSize().background(Brush.verticalGradient(0f to C.bgTop, 0.45f to C.bg))
-        ) { TabsScreen(platform, font) }
+        ) { TabsScreen(platform, font, onScreen) }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TabsScreen(platform: Platform, font: FontFamily) {
+private fun TabsScreen(platform: Platform, font: FontFamily, onScreen: Boolean) {
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<State>(State.Loading) }
     var sound by remember { mutableStateOf<Sound>(Sound.Loading) }
+    var soundTarget by remember { mutableStateOf<Boolean?>(null) } // where a toggle is moving it
+    var soundError by remember { mutableStateOf<String?>(null) } // why the last toggle failed
+    var soundGeneration by remember { mutableStateOf(0) } // a read older than a toggle is stale
     var refreshing by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf<Int?>(null) } // tabs opened so far during "open all"
     val opened = remember { mutableStateMapOf<String, Boolean>() }
 
     suspend fun load(userPulled: Boolean) {
         if (userPulled) refreshing = true else state = State.Loading
-        // Separate from the tabs: a closed Chrome fails them, and says nothing about the sound.
-        scope.launch {
-            sound = try {
-                Sound.Known(platform.loadSound().onPhone)
-            } catch (e: LoadFailure) {
-                Sound.Failed(e.kind, e.message ?: e.kind.name)
-            } catch (e: Exception) {
-                Sound.Failed(FailureKind.Desktop, e.message ?: e.toString())
-            }
-        }
         val started = Clock.System.now()
         val next = try {
             State.Loaded(platform.loadTabs(), nowHm())
@@ -224,6 +225,45 @@ private fun TabsScreen(platform: Platform, font: FontFamily) {
 
     LaunchedEffect(Unit) { load(userPulled = false) }
 
+    // Separate from the tabs: a closed Chrome fails them, and says nothing about the sound.
+    // Runs only while the app is on screen, so it also catches up the moment it comes back.
+    LaunchedEffect(onScreen) {
+        if (!onScreen) return@LaunchedEffect
+        while (true) {
+            val generation = soundGeneration
+            val next = try {
+                Sound.Known(platform.loadSound().onPhone)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: LoadFailure) {
+                Sound.Failed(e.kind, e.message ?: e.kind.name)
+            } catch (e: Exception) {
+                Sound.Failed(FailureKind.Desktop, e.message ?: e.toString())
+            }
+            if (soundTarget == null && generation == soundGeneration) sound = next
+            delay(SOUND_POLL_MS)
+        }
+    }
+
+    fun toggleSound(onPhone: Boolean) {
+        if (soundTarget != null) return
+        soundTarget = onPhone
+        soundError = null
+        soundGeneration++
+        scope.launch {
+            try {
+                sound = Sound.Known(platform.setSound(onPhone).onPhone)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                soundError = e.message ?: e.toString()
+            } finally {
+                soundGeneration++
+                soundTarget = null
+            }
+        }
+    }
+
     val t = TextStyles(font)
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -238,7 +278,10 @@ private fun TabsScreen(platform: Platform, font: FontFamily) {
                 Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(top = top + 8.dp, bottom = bottom + 120.dp),
             ) {
-                item { Header(state, sound, t, onRefresh = { scope.launch { load(userPulled = true) } }) }
+                item {
+                    Header(state, t, onRefresh = { scope.launch { load(userPulled = true) } })
+                    SoundLine(sound, soundTarget, soundError, t, ::toggleSound)
+                }
                 when (val s = state) {
                     is State.Loading -> items(4) { SkeletonCard() }
                     is State.Failed -> item { ErrorCard(s.kind, s.message, t) { scope.launch { load(false) } } }
@@ -302,8 +345,8 @@ private class TextStyles(f: FontFamily) {
 // ── header: the desktop → phone strip and the one number that matters ────────
 
 @Composable
-private fun Header(state: State, sound: Sound, t: TextStyles, onRefresh: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp).padding(top = 10.dp, bottom = 18.dp)) {
+private fun Header(state: State, t: TextStyles, onRefresh: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp).padding(top = 10.dp, bottom = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TransferGlyph(active = state is State.Loading, modifier = Modifier.width(112.dp).height(34.dp))
             Spacer(Modifier.weight(1f))
@@ -346,29 +389,57 @@ private fun Header(state: State, sound: Sound, t: TextStyles, onRefresh: () -> U
                 }
             }
         }
-        Spacer(Modifier.height(12.dp))
-        SoundLine(sound, t)
     }
 }
 
-/** Where the computer's sound is going. A statement, not a control, so it is not a button. */
+/** Where the computer's sound is going, and the switch that moves it. */
 @Composable
-private fun SoundLine(sound: Sound, t: TextStyles) {
-    val tint = when (sound) {
-        is Sound.Known -> if (sound.onPhone) C.teal else C.muted
-        is Sound.Failed -> C.error
-        Sound.Loading -> C.faint
+private fun SoundLine(sound: Sound, target: Boolean?, error: String?, t: TextStyles, onToggle: (Boolean) -> Unit) {
+    val known = sound as? Sound.Known
+    val onPhone = target ?: known?.onPhone
+    val tint = when {
+        sound is Sound.Failed -> C.error
+        onPhone == true -> C.teal
+        onPhone == false -> C.muted
+        else -> C.faint
     }
-    val text = when (sound) {
-        is Sound.Known -> if (sound.onPhone) "Computer sound: on this phone" else "Computer sound: on the computer"
+    val text = when {
+        target == true -> "Moving computer sound to this phone…"
+        target == false -> "Moving computer sound to the computer…"
+        known != null -> if (known.onPhone) "Computer sound on this phone" else "Computer sound on the computer"
         // Offline: the card below already explains the broken link.
-        is Sound.Failed -> if (sound.kind == FailureKind.Offline) "Computer sound: unknown" else "Computer sound: ${sound.message}"
-        Sound.Loading -> "Computer sound: …"
+        sound is Sound.Failed -> if (sound.kind == FailureKind.Offline) "Computer sound: unknown" else "Computer sound: ${sound.message}"
+        else -> "Computer sound: …"
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.AutoMirrored.Rounded.VolumeUp, null, tint = tint, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(8.dp))
-        Text(text, style = t.sub.copy(color = tint))
+    Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 16.dp, bottom = 12.dp)) {
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.AutoMirrored.Rounded.VolumeUp, null, tint = tint, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(text, style = t.sub.copy(color = tint), modifier = Modifier.weight(1f))
+            // Unknown state: no switch, because flipping it would be a guess.
+            if (onPhone != null) {
+                Spacer(Modifier.width(8.dp))
+                Switch(
+                    checked = onPhone,
+                    onCheckedChange = onToggle,
+                    enabled = target == null,
+                    modifier = Modifier.testTag("toggle-computer-sound"),
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = C.onTeal,
+                        checkedTrackColor = C.teal,
+                        uncheckedThumbColor = C.muted,
+                        uncheckedTrackColor = C.chip,
+                        uncheckedBorderColor = C.cardEdge,
+                        disabledCheckedThumbColor = C.onTeal,
+                        disabledCheckedTrackColor = C.teal.copy(alpha = .5f),
+                        disabledUncheckedThumbColor = C.faint,
+                        disabledUncheckedTrackColor = C.chip.copy(alpha = .5f),
+                        disabledUncheckedBorderColor = C.cardEdge,
+                    ),
+                )
+            }
+        }
+        if (error != null) Text(error, style = t.sub.copy(color = C.error))
     }
 }
 

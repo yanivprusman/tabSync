@@ -11,6 +11,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import android.graphics.BitmapFactory
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.Font
@@ -25,6 +28,18 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 class MainActivity : ComponentActivity() {
+    private var onScreen by mutableStateOf(false)
+
+    override fun onResume() {
+        super.onResume()
+        onScreen = true
+    }
+
+    override fun onPause() {
+        onScreen = false
+        super.onPause()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Dark navy UI: force light system-bar icons whatever the phone's day/night setting.
@@ -37,7 +52,8 @@ class MainActivity : ComponentActivity() {
             Font(R.font.heebo_medium, FontWeight.Medium),
             Font(R.font.heebo_bold, FontWeight.Bold),
         )
-        setContent { App(AndroidPlatform(this), heebo) }
+        val platform = AndroidPlatform(this)
+        setContent { App(platform, heebo, onScreen) }
     }
 }
 
@@ -49,12 +65,21 @@ class AndroidPlatform(private val context: Context) : Platform {
 
     override suspend fun loadSound(): SoundStatus = json.decodeFromString(SoundStatus.serializer(), get("api/sound"))
 
-    private suspend fun get(path: String): String = withContext(Dispatchers.IO) {
+    override suspend fun setSound(onPhone: Boolean): SoundStatus =
+        json.decodeFromString(SoundStatus.serializer(), get("api/sound", postBody = """{"on":$onPhone}"""))
+
+    private suspend fun get(path: String, postBody: String? = null): String = withContext(Dispatchers.IO) {
         val conn = URL(BuildConfig.API_BASE_URL + path).openConnection() as HttpURLConnection
         conn.connectTimeout = 5000
         conn.readTimeout = 20000
         conn.setRequestProperty("Authorization", "Bearer ${BuildConfig.API_TOKEN}")
         try {
+            if (postBody != null) {
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.outputStream.use { it.write(postBody.toByteArray()) }
+            }
             val code = conn.responseCode
             val body = (if (code in 200..299) conn.inputStream else conn.errorStream)
                 ?.bufferedReader()?.use { it.readText() }.orEmpty()

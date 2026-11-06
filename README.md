@@ -8,8 +8,9 @@ Move Chrome tabs between the desktop and the phone.
 - **Phone → desktop**: `phoneTabsToDesktop [--dry-run]` in any terminal
   (`scripts/phone-to-desktop.mjs`, via adb + phone Chrome's DevTools socket).
 
-The app also shows where the computer's sound is going (`GET /api/sound`, which asks
-`desktop/phoneAudio.sh status`). It reloads with the tabs, on opening and on pull-to-refresh.
+The app also shows where the computer's sound is going and has a switch to move it, both
+through `desktop/phoneAudio.sh`: `GET /api/sound` reads its status, polled every 3 s while the
+app is on screen, and `POST /api/sound {"on": true|false}` runs `on` or `off`.
 
 Both directions share one filter, `lib/tabs.mjs`: **solitaire, dashboard and WhatsApp
 tabs stay put**, as do non-web pages; `localhost` URLs become `10.7.0.2` for the phone.
