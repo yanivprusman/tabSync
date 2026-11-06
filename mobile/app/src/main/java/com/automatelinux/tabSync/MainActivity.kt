@@ -1,14 +1,20 @@
 package com.automatelinux.tabSync
 
+import android.Manifest
 import android.content.ActivityNotFoundException
+import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import android.provider.Browser
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import android.graphics.BitmapFactory
 import androidx.compose.runtime.getValue
@@ -19,16 +25,42 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
 class MainActivity : ComponentActivity() {
     private var onScreen by mutableStateOf(false)
+
+    private var photoAccessReply: CompletableDeferred<Boolean>? = null
+    private val photoAccessPrompt = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        photoAccessReply?.complete(hasPhotoAccess())
+    }
+
+    /** Full access only: with "Select photos" the app could not tell which photo is the newest. */
+    private fun hasPhotoAccess() = checkSelfPermission(fullPhotoPermission()) == PackageManager.PERMISSION_GRANTED
+
+    private fun fullPhotoPermission() =
+        if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE
+
+    private suspend fun askForPhotoAccess(): Boolean {
+        if (hasPhotoAccess()) return true
+        val reply = CompletableDeferred<Boolean>()
+        photoAccessReply = reply
+        val asked = if (Build.VERSION.SDK_INT >= 34) {
+            arrayOf(fullPhotoPermission(), Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        } else {
+            arrayOf(fullPhotoPermission())
+        }
+        photoAccessPrompt.launch(asked)
+        return reply.await()
+    }
 
     override fun onResume() {
         super.onResume()
@@ -52,33 +84,77 @@ class MainActivity : ComponentActivity() {
             Font(R.font.heebo_medium, FontWeight.Medium),
             Font(R.font.heebo_bold, FontWeight.Bold),
         )
-        val platform = AndroidPlatform(this)
+        val platform = AndroidPlatform(this, ::askForPhotoAccess)
         setContent { App(platform, heebo, onScreen) }
     }
 }
 
 private val json = Json { ignoreUnknownKeys = true }
 
-class AndroidPlatform(private val context: Context) : Platform {
+class AndroidPlatform(
+    private val context: Context,
+    private val askForPhotoAccess: suspend () -> Boolean,
+) : Platform {
 
     override suspend fun loadTabs(): TabList = json.decodeFromString(TabList.serializer(), get("api/tabs"))
 
     override suspend fun loadSound(): SoundStatus = json.decodeFromString(SoundStatus.serializer(), get("api/sound"))
 
     override suspend fun setSound(onPhone: Boolean): SoundStatus =
-        json.decodeFromString(SoundStatus.serializer(), get("api/sound", postBody = """{"on":$onPhone}"""))
+        json.decodeFromString(SoundStatus.serializer(), get("api/sound", "application/json") { it.write("""{"on":$onPhone}""".toByteArray()) })
 
-    private suspend fun get(path: String, postBody: String? = null): String = withContext(Dispatchers.IO) {
+    override suspend fun sendLastPhoto(): SentPhoto {
+        if (!askForPhotoAccess()) {
+            throw Exception("TabSync needs access to all photos. Allow it under Settings > Apps > TabSync > Permissions.")
+        }
+        return withContext(Dispatchers.IO) {
+            val photo = newestPhoto()
+            val input = context.contentResolver.openInputStream(photo.uri)
+                ?: throw Exception("The phone would not open ${photo.name}")
+            val body = input.use { source ->
+                get("api/photo?name=${Uri.encode(photo.name)}", photo.mimeType) { source.copyTo(it) }
+            }
+            json.decodeFromString(SentPhoto.serializer(), body)
+        }
+    }
+
+    private class Photo(val uri: Uri, val name: String, val mimeType: String)
+
+    /**
+     * Newest image in DCIM, which is the camera and screenshots. Not the whole gallery: chat
+     * apps save every image they receive, and those are not photos taken on this phone.
+     */
+    private fun newestPhoto(): Photo {
+        val images = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val cursor = context.contentResolver.query(
+            images,
+            arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME, MediaStore.Images.Media.MIME_TYPE),
+            "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?",
+            arrayOf("DCIM/%"),
+            "${MediaStore.Images.Media.DATE_ADDED} DESC",
+        ) ?: throw Exception("The phone's photo library did not answer")
+        return cursor.use {
+            if (!it.moveToFirst()) throw Exception("There are no photos in the phone's DCIM folder")
+            Photo(ContentUris.withAppendedId(images, it.getLong(0)), it.getString(1), it.getString(2))
+        }
+    }
+
+    private suspend fun get(
+        path: String,
+        contentType: String? = null,
+        writeBody: ((OutputStream) -> Unit)? = null,
+    ): String = withContext(Dispatchers.IO) {
         val conn = URL(BuildConfig.API_BASE_URL + path).openConnection() as HttpURLConnection
         conn.connectTimeout = 5000
         conn.readTimeout = 20000
         conn.setRequestProperty("Authorization", "Bearer ${BuildConfig.API_TOKEN}")
         try {
-            if (postBody != null) {
+            if (writeBody != null) {
                 conn.requestMethod = "POST"
                 conn.doOutput = true
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.outputStream.use { it.write(postBody.toByteArray()) }
+                conn.setChunkedStreamingMode(64 * 1024) // a photo must not be buffered in memory
+                conn.setRequestProperty("Content-Type", contentType)
+                conn.outputStream.use(writeBody)
             }
             val code = conn.responseCode
             val body = (if (code in 200..299) conn.inputStream else conn.errorStream)

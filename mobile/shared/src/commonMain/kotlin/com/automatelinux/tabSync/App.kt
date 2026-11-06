@@ -46,10 +46,12 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Style
 import androidx.compose.material.icons.rounded.WebAssetOff
 import androidx.compose.material.icons.rounded.WifiOff
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
@@ -66,6 +68,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -108,6 +111,9 @@ data class TabList(val tabs: List<Tab> = emptyList(), val skipped: List<Skipped>
 @Serializable
 data class SoundStatus(val onPhone: Boolean)
 
+@Serializable
+data class SentPhoto(val name: String)
+
 /**
  * Why loading failed — WHICH link broke. "Can't reach the desktop" is only true
  * for [Offline]; for the others the desktop answered and is telling us what is
@@ -141,6 +147,8 @@ interface Platform {
     suspend fun loadSound(): SoundStatus
     /** Moves the computer's sound; answers with where it ended up. */
     suspend fun setSound(onPhone: Boolean): SoundStatus
+    /** Copies the phone's newest photo to the desktop's Screenshots folder. */
+    suspend fun sendLastPhoto(): SentPhoto
     fun open(url: String)
     /** Opens each URL in its own browser tab; [onOpened] gets the count so far. */
     suspend fun openAll(urls: List<String>, onOpened: (Int) -> Unit)
@@ -176,6 +184,13 @@ private sealed interface Sound {
     data class Failed(val kind: FailureKind, val message: String) : Sound
 }
 
+private sealed interface PhotoSend {
+    data object Idle : PhotoSend
+    data object Sending : PhotoSend
+    data class Sent(val name: String) : PhotoSend
+    data class Failed(val message: String) : PhotoSend
+}
+
 /** How often the sound line re-reads the desktop while the app is on screen. */
 private const val SOUND_POLL_MS = 3000L
 
@@ -202,6 +217,7 @@ private fun TabsScreen(platform: Platform, font: FontFamily, onScreen: Boolean) 
     var soundTarget by remember { mutableStateOf<Boolean?>(null) } // where a toggle is moving it
     var soundError by remember { mutableStateOf<String?>(null) } // why the last toggle failed
     var soundGeneration by remember { mutableStateOf(0) } // a read older than a toggle is stale
+    var photoSend by remember { mutableStateOf<PhotoSend>(PhotoSend.Idle) }
     var refreshing by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf<Int?>(null) } // tabs opened so far during "open all"
     val opened = remember { mutableStateMapOf<String, Boolean>() }
@@ -281,6 +297,18 @@ private fun TabsScreen(platform: Platform, font: FontFamily, onScreen: Boolean) 
                 item {
                     Header(state, t, onRefresh = { scope.launch { load(userPulled = true) } })
                     SoundLine(sound, soundTarget, soundError, t, ::toggleSound)
+                    SendPhotoCard(photoSend, t) {
+                        photoSend = PhotoSend.Sending
+                        scope.launch {
+                            photoSend = try {
+                                PhotoSend.Sent(platform.sendLastPhoto().name)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                PhotoSend.Failed(e.message ?: e.toString())
+                            }
+                        }
+                    }
                 }
                 when (val s = state) {
                     is State.Loading -> items(4) { SkeletonCard() }
@@ -440,6 +468,54 @@ private fun SoundLine(sound: Sound, target: Boolean?, error: String?, t: TextSty
             }
         }
         if (error != null) Text(error, style = t.sub.copy(color = C.error))
+    }
+}
+
+/** One tap: the phone's newest photo lands in the desktop's Screenshots folder. */
+@Composable
+private fun SendPhotoCard(send: PhotoSend, t: TextStyles, onSend: () -> Unit) {
+    val sending = send is PhotoSend.Sending
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+            .alpha(if (sending) .6f else 1f)
+            .clip(RoundedCornerShape(18.dp))
+            .background(C.card)
+            .border(1.dp, if (send is PhotoSend.Sent) C.teal.copy(alpha = .45f) else C.cardEdge, RoundedCornerShape(18.dp))
+            .clickable(enabled = !sending, onClick = onSend)
+            .testTag("send-last-photo")
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(C.chip), contentAlignment = Alignment.Center) {
+            Icon(Icons.Rounded.Image, null, tint = C.teal, modifier = Modifier.size(24.dp))
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Send last photo to desktop", style = t.title)
+            Spacer(Modifier.height(3.dp))
+            when (send) {
+                PhotoSend.Idle -> Text("Goes to the Screenshots folder", style = t.host)
+                PhotoSend.Sending -> Text("Sending…", style = t.host)
+                is PhotoSend.Sent -> Text("Sent ${send.name}", style = t.host.copy(color = C.teal))
+                is PhotoSend.Failed -> Text(send.message, style = t.host.copy(color = C.error))
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Box(
+            Modifier.size(36.dp).clip(CircleShape).background(if (send is PhotoSend.Sent) C.teal else C.chip),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (sending) {
+                CircularProgressIndicator(Modifier.size(18.dp), color = C.teal, strokeWidth = 2.dp)
+            } else {
+                Icon(
+                    if (send is PhotoSend.Sent) Icons.Rounded.Check else Icons.AutoMirrored.Rounded.ArrowForward,
+                    contentDescription = null,
+                    tint = if (send is PhotoSend.Sent) C.onTeal else C.text,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
+        }
     }
 }
 
