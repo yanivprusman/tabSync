@@ -507,11 +507,6 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
                             }
                         }
                     }
-                    if (s.list.skipped.isNotEmpty()) {
-                        item {
-                            StayingBehind(s.list.skipped, skippedOpen, t) { skippedOpen = !skippedOpen }
-                        }
-                    }
                 }
             }
             item {
@@ -563,7 +558,19 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
             }
             // Last on the screen, whatever state the tabs are in: rarely needed, but the USB fix is
             // needed exactly when the desktop has no other way to be reached.
-            item { MoreSection(moreOpen, usbFix, link != Link.Offline, t, { moreOpen = !moreOpen }, ::fixUsb) }
+            item {
+                MoreSection(
+                    open = moreOpen,
+                    fix = usbFix,
+                    reachable = link != Link.Offline,
+                    skipped = (tabs as? TabsState.Loaded)?.list?.skipped.orEmpty(),
+                    skippedOpen = skippedOpen,
+                    t = t,
+                    onToggle = { moreOpen = !moreOpen },
+                    onFix = ::fixUsb,
+                    onToggleSkipped = { skippedOpen = !skippedOpen },
+                )
+            }
         }
     }
 }
@@ -1021,8 +1028,7 @@ private fun NoTabs(t: TextStyles) {
 /** Why a tab is missing from the list has an answer, but not one worth a screenful. */
 @Composable
 private fun StayingBehind(skipped: List<Skipped>, open: Boolean, t: TextStyles, onToggle: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
-        HorizontalDivider(Modifier.padding(horizontal = SIDE), color = C.line)
+    Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().clickable(onClick = onToggle).testTag("toggle-staying-tabs")
                 .padding(horizontal = SIDE, vertical = 14.dp),
@@ -1049,7 +1055,17 @@ private fun StayingBehind(skipped: List<Skipped>, open: Boolean, t: TextStyles, 
 
 /** Collapsed at the very bottom: what is in here is for rare days, not for every visit. */
 @Composable
-private fun MoreSection(open: Boolean, fix: UsbFix, reachable: Boolean, t: TextStyles, onToggle: () -> Unit, onFix: () -> Unit) {
+private fun MoreSection(
+    open: Boolean,
+    fix: UsbFix,
+    reachable: Boolean,
+    skipped: List<Skipped>,
+    skippedOpen: Boolean,
+    t: TextStyles,
+    onToggle: () -> Unit,
+    onFix: () -> Unit,
+    onToggleSkipped: () -> Unit,
+) {
     Column(Modifier.fillMaxWidth().padding(top = SECTION_GAP)) {
         HorizontalDivider(Modifier.padding(horizontal = SIDE), color = C.line)
         Row(
@@ -1060,7 +1076,10 @@ private fun MoreSection(open: Boolean, fix: UsbFix, reachable: Boolean, t: TextS
             Text("More", style = t.body, modifier = Modifier.weight(1f))
             Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = C.muted, modifier = Modifier.size(22.dp))
         }
-        if (open) UsbFixRow(fix, reachable, t, onFix)
+        if (open) {
+            UsbFixRow(fix, reachable, t, onFix)
+            if (skipped.isNotEmpty()) StayingBehind(skipped, skippedOpen, t, onToggleSkipped)
+        }
     }
 }
 
