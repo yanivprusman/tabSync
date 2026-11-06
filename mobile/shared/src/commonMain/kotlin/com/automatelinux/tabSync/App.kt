@@ -46,6 +46,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.Collections
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Style
@@ -149,6 +150,8 @@ interface Platform {
     suspend fun setSound(onPhone: Boolean): SoundStatus
     /** Copies the phone's newest photo to the desktop's Screenshots folder. */
     suspend fun sendLastPhoto(): SentPhoto
+    /** Lets the user choose photos and copies them the same way; empty if they chose none. */
+    suspend fun pickAndSendPhotos(onProgress: (done: Int, total: Int) -> Unit): List<SentPhoto>
     fun open(url: String)
     /** Opens each URL in its own browser tab; [onOpened] gets the count so far. */
     suspend fun openAll(urls: List<String>, onOpened: (Int) -> Unit)
@@ -186,8 +189,8 @@ private sealed interface Sound {
 
 private sealed interface PhotoSend {
     data object Idle : PhotoSend
-    data object Sending : PhotoSend
-    data class Sent(val name: String) : PhotoSend
+    data class Sending(val text: String = "Sending…") : PhotoSend
+    data class Sent(val text: String) : PhotoSend
     data class Failed(val message: String) : PhotoSend
 }
 
@@ -217,7 +220,8 @@ private fun TabsScreen(platform: Platform, font: FontFamily, onScreen: Boolean) 
     var soundTarget by remember { mutableStateOf<Boolean?>(null) } // where a toggle is moving it
     var soundError by remember { mutableStateOf<String?>(null) } // why the last toggle failed
     var soundGeneration by remember { mutableStateOf(0) } // a read older than a toggle is stale
-    var photoSend by remember { mutableStateOf<PhotoSend>(PhotoSend.Idle) }
+    var lastPhotoSend by remember { mutableStateOf<PhotoSend>(PhotoSend.Idle) }
+    var chosenPhotosSend by remember { mutableStateOf<PhotoSend>(PhotoSend.Idle) }
     var refreshing by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf<Int?>(null) } // tabs opened so far during "open all"
     val opened = remember { mutableStateMapOf<String, Boolean>() }
@@ -297,11 +301,37 @@ private fun TabsScreen(platform: Platform, font: FontFamily, onScreen: Boolean) 
                 item {
                     Header(state, t, onRefresh = { scope.launch { load(userPulled = true) } })
                     SoundLine(sound, soundTarget, soundError, t, ::toggleSound)
-                    SendPhotoCard(photoSend, t) {
-                        photoSend = PhotoSend.Sending
+                    val photoBusy = lastPhotoSend is PhotoSend.Sending || chosenPhotosSend is PhotoSend.Sending
+                    PhotoCard(
+                        "Send last photo to desktop", "Goes to the Screenshots folder", Icons.Rounded.Image,
+                        lastPhotoSend, photoBusy, "send-last-photo", t,
+                    ) {
+                        lastPhotoSend = PhotoSend.Sending()
                         scope.launch {
-                            photoSend = try {
-                                PhotoSend.Sent(platform.sendLastPhoto().name)
+                            lastPhotoSend = try {
+                                PhotoSend.Sent("Sent ${platform.sendLastPhoto().name}")
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                PhotoSend.Failed(e.message ?: e.toString())
+                            }
+                        }
+                    }
+                    PhotoCard(
+                        "Choose photos to send", "One or several, to the same folder", Icons.Rounded.Collections,
+                        chosenPhotosSend, photoBusy, "choose-photos", t,
+                    ) {
+                        chosenPhotosSend = PhotoSend.Sending("Choosing…")
+                        scope.launch {
+                            chosenPhotosSend = try {
+                                val sent = platform.pickAndSendPhotos { done, total ->
+                                    chosenPhotosSend = PhotoSend.Sending("Sending ${done + 1} of $total…")
+                                }
+                                when (sent.size) {
+                                    0 -> PhotoSend.Idle
+                                    1 -> PhotoSend.Sent("Sent ${sent[0].name}")
+                                    else -> PhotoSend.Sent("Sent ${sent.size} photos")
+                                }
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
@@ -471,32 +501,40 @@ private fun SoundLine(sound: Sound, target: Boolean?, error: String?, t: TextSty
     }
 }
 
-/** One tap: the phone's newest photo lands in the desktop's Screenshots folder. */
+/** One photo action. [busy] covers both cards: only one send runs at a time. */
 @Composable
-private fun SendPhotoCard(send: PhotoSend, t: TextStyles, onSend: () -> Unit) {
-    val sending = send is PhotoSend.Sending
+private fun PhotoCard(
+    title: String,
+    idleText: String,
+    icon: ImageVector,
+    send: PhotoSend,
+    busy: Boolean,
+    tag: String,
+    t: TextStyles,
+    onClick: () -> Unit,
+) {
     Row(
-        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
-            .alpha(if (sending) .6f else 1f)
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 10.dp)
+            .alpha(if (busy) .6f else 1f)
             .clip(RoundedCornerShape(18.dp))
             .background(C.card)
             .border(1.dp, if (send is PhotoSend.Sent) C.teal.copy(alpha = .45f) else C.cardEdge, RoundedCornerShape(18.dp))
-            .clickable(enabled = !sending, onClick = onSend)
-            .testTag("send-last-photo")
+            .clickable(enabled = !busy, onClick = onClick)
+            .testTag(tag)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(C.chip), contentAlignment = Alignment.Center) {
-            Icon(Icons.Rounded.Image, null, tint = C.teal, modifier = Modifier.size(24.dp))
+            Icon(icon, null, tint = C.teal, modifier = Modifier.size(24.dp))
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text("Send last photo to desktop", style = t.title)
+            Text(title, style = t.title)
             Spacer(Modifier.height(3.dp))
             when (send) {
-                PhotoSend.Idle -> Text("Goes to the Screenshots folder", style = t.host)
-                PhotoSend.Sending -> Text("Sending…", style = t.host)
-                is PhotoSend.Sent -> Text("Sent ${send.name}", style = t.host.copy(color = C.teal))
+                PhotoSend.Idle -> Text(idleText, style = t.host)
+                is PhotoSend.Sending -> Text(send.text, style = t.host)
+                is PhotoSend.Sent -> Text(send.text, style = t.host.copy(color = C.teal))
                 is PhotoSend.Failed -> Text(send.message, style = t.host.copy(color = C.error))
             }
         }
@@ -505,7 +543,7 @@ private fun SendPhotoCard(send: PhotoSend, t: TextStyles, onSend: () -> Unit) {
             Modifier.size(36.dp).clip(CircleShape).background(if (send is PhotoSend.Sent) C.teal else C.chip),
             contentAlignment = Alignment.Center,
         ) {
-            if (sending) {
+            if (send is PhotoSend.Sending) {
                 CircularProgressIndicator(Modifier.size(18.dp), color = C.teal, strokeWidth = 2.dp)
             } else {
                 Icon(

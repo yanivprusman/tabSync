@@ -10,10 +10,12 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.provider.Browser
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import android.graphics.BitmapFactory
@@ -25,6 +27,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -62,6 +65,19 @@ class MainActivity : ComponentActivity() {
         return reply.await()
     }
 
+    private var pickerReply: CompletableDeferred<List<Uri>>? = null
+    private val photoPicker = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) {
+        pickerReply?.complete(it)
+    }
+
+    /** The system photo picker: one or many, and it needs no permission. Empty when cancelled. */
+    private suspend fun pickPhotos(): List<Uri> {
+        val reply = CompletableDeferred<List<Uri>>()
+        pickerReply = reply
+        photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        return reply.await()
+    }
+
     override fun onResume() {
         super.onResume()
         onScreen = true
@@ -84,7 +100,7 @@ class MainActivity : ComponentActivity() {
             Font(R.font.heebo_medium, FontWeight.Medium),
             Font(R.font.heebo_bold, FontWeight.Bold),
         )
-        val platform = AndroidPlatform(this, ::askForPhotoAccess)
+        val platform = AndroidPlatform(this, ::askForPhotoAccess, ::pickPhotos)
         setContent { App(platform, heebo, onScreen) }
     }
 }
@@ -94,6 +110,7 @@ private val json = Json { ignoreUnknownKeys = true }
 class AndroidPlatform(
     private val context: Context,
     private val askForPhotoAccess: suspend () -> Boolean,
+    private val pickPhotos: suspend () -> List<Uri>,
 ) : Platform {
 
     override suspend fun loadTabs(): TabList = json.decodeFromString(TabList.serializer(), get("api/tabs"))
@@ -107,15 +124,45 @@ class AndroidPlatform(
         if (!askForPhotoAccess()) {
             throw Exception("TabSync needs access to all photos. Allow it under Settings > Apps > TabSync > Permissions.")
         }
+        return withContext(Dispatchers.IO) { upload(newestPhoto()) }
+    }
+
+    override suspend fun pickAndSendPhotos(onProgress: (done: Int, total: Int) -> Unit): List<SentPhoto> {
+        val uris = pickPhotos()
         return withContext(Dispatchers.IO) {
-            val photo = newestPhoto()
-            val input = context.contentResolver.openInputStream(photo.uri)
-                ?: throw Exception("The phone would not open ${photo.name}")
-            val body = input.use { source ->
-                get("api/photo?name=${Uri.encode(photo.name)}", photo.mimeType) { source.copyTo(it) }
+            val sent = mutableListOf<SentPhoto>()
+            for (uri in uris) {
+                onProgress(sent.size, uris.size)
+                try {
+                    sent += upload(pickedPhoto(uri))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    throw Exception(if (sent.isEmpty()) e.message else "Sent ${sent.size} of ${uris.size}, then: ${e.message}")
+                }
             }
-            json.decodeFromString(SentPhoto.serializer(), body)
+            sent
         }
+    }
+
+    private suspend fun upload(photo: Photo): SentPhoto {
+        val input = context.contentResolver.openInputStream(photo.uri)
+            ?: throw Exception("The phone would not open ${photo.name}")
+        val body = input.use { source ->
+            get("api/photo?name=${Uri.encode(photo.name)}", photo.mimeType) { source.copyTo(it) }
+        }
+        return json.decodeFromString(SentPhoto.serializer(), body)
+    }
+
+    private fun pickedPhoto(uri: Uri): Photo {
+        val type = context.contentResolver.getType(uri) ?: throw Exception("The phone did not say what type $uri is")
+        val cursor = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?: throw Exception("The phone did not say what $uri is called")
+        val name = cursor.use {
+            if (!it.moveToFirst()) throw Exception("The phone did not say what $uri is called")
+            it.getString(0)
+        }
+        return Photo(uri, name, type)
     }
 
     private class Photo(val uri: Uri, val name: String, val mimeType: String)

@@ -12,8 +12,9 @@ The app also shows where the computer's sound is going and has a switch to move 
 through `desktop/phoneAudio.sh`: `GET /api/sound` reads its status, polled every 3 s while the
 app is on screen, and `POST /api/sound {"on": true|false}` runs `on` or `off`.
 
-A button sends the phone's newest photo (newest image in `DCIM`: camera and screenshots) to the
-desktop's `~/Pictures/Screenshots` through `POST /api/photo?name=`. It never replaces a file.
+Two buttons copy photos to the desktop's `~/Pictures/Screenshots` through
+`POST /api/photo?name=`: one sends the newest image in `DCIM` (camera and screenshots), the other
+opens the system photo picker for one or several. A copy never replaces a file.
 
 Both directions share one filter, `lib/tabs.mjs`: **solitaire, dashboard and WhatsApp
 tabs stay put**, as do non-web pages; `localhost` URLs become `10.7.0.2` for the phone.
