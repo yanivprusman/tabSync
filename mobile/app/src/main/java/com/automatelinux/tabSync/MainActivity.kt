@@ -45,8 +45,12 @@ private val json = Json { ignoreUnknownKeys = true }
 
 class AndroidPlatform(private val context: Context) : Platform {
 
-    override suspend fun loadTabs(): TabList = withContext(Dispatchers.IO) {
-        val conn = URL(BuildConfig.API_BASE_URL + "api/tabs").openConnection() as HttpURLConnection
+    override suspend fun loadTabs(): TabList = json.decodeFromString(TabList.serializer(), get("api/tabs"))
+
+    override suspend fun loadSound(): SoundStatus = json.decodeFromString(SoundStatus.serializer(), get("api/sound"))
+
+    private suspend fun get(path: String): String = withContext(Dispatchers.IO) {
+        val conn = URL(BuildConfig.API_BASE_URL + path).openConnection() as HttpURLConnection
         conn.connectTimeout = 5000
         conn.readTimeout = 20000
         conn.setRequestProperty("Authorization", "Bearer ${BuildConfig.API_TOKEN}")
@@ -63,7 +67,7 @@ class AndroidPlatform(private val context: Context) : Platform {
                     msg ?: "Desktop answered HTTP $code",
                 )
             }
-            json.decodeFromString(TabList.serializer(), body)
+            body
         } catch (e: java.io.IOException) {
             throw LoadFailure(
                 FailureKind.Offline,

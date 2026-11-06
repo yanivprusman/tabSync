@@ -40,6 +40,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Chat
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Dashboard
@@ -101,6 +102,9 @@ data class Skipped(val title: String, val reason: String)
 @Serializable
 data class TabList(val tabs: List<Tab> = emptyList(), val skipped: List<Skipped> = emptyList())
 
+@Serializable
+data class SoundStatus(val onPhone: Boolean)
+
 /**
  * Why loading failed — WHICH link broke. "Can't reach the desktop" is only true
  * for [Offline]; for the others the desktop answered and is telling us what is
@@ -131,6 +135,7 @@ class LoadFailure(val kind: FailureKind, message: String) : Exception(message)
 /** What the platform supplies. */
 interface Platform {
     suspend fun loadTabs(): TabList
+    suspend fun loadSound(): SoundStatus
     fun open(url: String)
     /** Opens each URL in its own browser tab; [onOpened] gets the count so far. */
     suspend fun openAll(urls: List<String>, onOpened: (Int) -> Unit)
@@ -160,6 +165,12 @@ private sealed interface State {
     data class Failed(val kind: FailureKind, val message: String) : State
 }
 
+private sealed interface Sound {
+    data object Loading : Sound
+    data class Known(val onPhone: Boolean) : Sound
+    data class Failed(val kind: FailureKind, val message: String) : Sound
+}
+
 private fun nowHm(): String {
     val t = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
     return "${t.hour.toString().padStart(2, '0')}:${t.minute.toString().padStart(2, '0')}"
@@ -179,12 +190,23 @@ fun App(platform: Platform, font: FontFamily = FontFamily.Default) {
 private fun TabsScreen(platform: Platform, font: FontFamily) {
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<State>(State.Loading) }
+    var sound by remember { mutableStateOf<Sound>(Sound.Loading) }
     var refreshing by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf<Int?>(null) } // tabs opened so far during "open all"
     val opened = remember { mutableStateMapOf<String, Boolean>() }
 
     suspend fun load(userPulled: Boolean) {
         if (userPulled) refreshing = true else state = State.Loading
+        // Separate from the tabs: a closed Chrome fails them, and says nothing about the sound.
+        scope.launch {
+            sound = try {
+                Sound.Known(platform.loadSound().onPhone)
+            } catch (e: LoadFailure) {
+                Sound.Failed(e.kind, e.message ?: e.kind.name)
+            } catch (e: Exception) {
+                Sound.Failed(FailureKind.Desktop, e.message ?: e.toString())
+            }
+        }
         val started = Clock.System.now()
         val next = try {
             State.Loaded(platform.loadTabs(), nowHm())
@@ -216,7 +238,7 @@ private fun TabsScreen(platform: Platform, font: FontFamily) {
                 Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(top = top + 8.dp, bottom = bottom + 120.dp),
             ) {
-                item { Header(state, t, onRefresh = { scope.launch { load(userPulled = true) } }) }
+                item { Header(state, sound, t, onRefresh = { scope.launch { load(userPulled = true) } }) }
                 when (val s = state) {
                     is State.Loading -> items(4) { SkeletonCard() }
                     is State.Failed -> item { ErrorCard(s.kind, s.message, t) { scope.launch { load(false) } } }
@@ -280,7 +302,7 @@ private class TextStyles(f: FontFamily) {
 // ── header: the desktop → phone strip and the one number that matters ────────
 
 @Composable
-private fun Header(state: State, t: TextStyles, onRefresh: () -> Unit) {
+private fun Header(state: State, sound: Sound, t: TextStyles, onRefresh: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp).padding(top = 10.dp, bottom = 18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TransferGlyph(active = state is State.Loading, modifier = Modifier.width(112.dp).height(34.dp))
@@ -324,6 +346,29 @@ private fun Header(state: State, t: TextStyles, onRefresh: () -> Unit) {
                 }
             }
         }
+        Spacer(Modifier.height(12.dp))
+        SoundLine(sound, t)
+    }
+}
+
+/** Where the computer's sound is going. A statement, not a control, so it is not a button. */
+@Composable
+private fun SoundLine(sound: Sound, t: TextStyles) {
+    val tint = when (sound) {
+        is Sound.Known -> if (sound.onPhone) C.teal else C.muted
+        is Sound.Failed -> C.error
+        Sound.Loading -> C.faint
+    }
+    val text = when (sound) {
+        is Sound.Known -> if (sound.onPhone) "Computer sound: on this phone" else "Computer sound: on the computer"
+        // Offline: the card below already explains the broken link.
+        is Sound.Failed -> if (sound.kind == FailureKind.Offline) "Computer sound: unknown" else "Computer sound: ${sound.message}"
+        Sound.Loading -> "Computer sound: …"
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.AutoMirrored.Rounded.VolumeUp, null, tint = tint, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text, style = t.sub.copy(color = tint))
     }
 }
 
