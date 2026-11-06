@@ -469,6 +469,51 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
     ) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = top + 6.dp, bottom = bottom + 28.dp)) {
             item { TopBar(link, t) }
+            when (val s = tabs) {
+                is TabsState.Loading -> {
+                    item { TabsHeading(null, null, t) {} }
+                    items(3) { SkeletonRow() }
+                }
+                is TabsState.Failed -> {
+                    item { TabsHeading(null, null, t) {} }
+                    item { TabsProblem(s.kind, s.message, t) }
+                }
+                is TabsState.Loaded -> {
+                    val list = s.list.tabs
+                    item {
+                        TabsHeading(list.size, openingAll?.let { "Opening $it of ${list.size}…" }, t) {
+                            if (openingAll == null) {
+                                openingAll = 0
+                                scope.launch {
+                                    try {
+                                        platform.openAll(list.map { it.url }) { n ->
+                                            openingAll = n
+                                            opened[list[n - 1].url] = true
+                                        }
+                                    } finally {
+                                        delay(400)
+                                        openingAll = null
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (list.isEmpty()) item { NoTabs(t) }
+                    items(list, key = { it.url }) { tab ->
+                        Column(Modifier.animateItem()) {
+                            TabRow(tab, opened[tab.url] == true, platform, t) {
+                                platform.open(tab.url)
+                                opened[tab.url] = true
+                            }
+                        }
+                    }
+                    if (s.list.skipped.isNotEmpty()) {
+                        item {
+                            StayingBehind(s.list.skipped, skippedOpen, t) { skippedOpen = !skippedOpen }
+                        }
+                    }
+                }
+            }
             item {
                 SoundSection(sound, soundTarget, volumeTarget, muteTarget, link != Link.Offline, soundError, t, ::moveSound, ::changeVolume, ::changeMute)
             }
@@ -515,51 +560,6 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
                         }
                     },
                 )
-            }
-            when (val s = tabs) {
-                is TabsState.Loading -> {
-                    item { TabsHeading(null, null, t) {} }
-                    items(3) { SkeletonRow() }
-                }
-                is TabsState.Failed -> {
-                    item { TabsHeading(null, null, t) {} }
-                    item { TabsProblem(s.kind, s.message, t) }
-                }
-                is TabsState.Loaded -> {
-                    val list = s.list.tabs
-                    item {
-                        TabsHeading(list.size, openingAll?.let { "Opening $it of ${list.size}…" }, t) {
-                            if (openingAll == null) {
-                                openingAll = 0
-                                scope.launch {
-                                    try {
-                                        platform.openAll(list.map { it.url }) { n ->
-                                            openingAll = n
-                                            opened[list[n - 1].url] = true
-                                        }
-                                    } finally {
-                                        delay(400)
-                                        openingAll = null
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (list.isEmpty()) item { NoTabs(t) }
-                    items(list, key = { it.url }) { tab ->
-                        Column(Modifier.animateItem()) {
-                            TabRow(tab, opened[tab.url] == true, platform, t) {
-                                platform.open(tab.url)
-                                opened[tab.url] = true
-                            }
-                        }
-                    }
-                    if (s.list.skipped.isNotEmpty()) {
-                        item {
-                            StayingBehind(s.list.skipped, skippedOpen, t) { skippedOpen = !skippedOpen }
-                        }
-                    }
-                }
             }
             // Last on the screen, whatever state the tabs are in: rarely needed, but the USB fix is
             // needed exactly when the desktop has no other way to be reached.
@@ -630,7 +630,7 @@ private fun SoundSection(
     val status = (sound as? Sound.Known)?.status
     val onPhone = target ?: status?.onPhone
     val enabled = reachable && target == null && sound is Sound.Known
-    Column(Modifier.fillMaxWidth().padding(start = SIDE, end = SIDE, top = 14.dp)) {
+    Column(Modifier.fillMaxWidth().padding(start = SIDE, end = SIDE, top = SECTION_GAP)) {
         Text("Computer sound plays on", style = t.h2)
         Spacer(Modifier.height(12.dp))
         BoxWithConstraints(
@@ -907,7 +907,7 @@ private fun ChooseTile(enabled: Boolean, t: TextStyles, onClick: () -> Unit) {
 @Composable
 private fun TabsHeading(count: Int?, progress: String?, t: TextStyles, onOpenAll: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(start = SIDE, end = SIDE, top = SECTION_GAP, bottom = 6.dp),
+        Modifier.fillMaxWidth().padding(start = SIDE, end = SIDE, top = 14.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("Tabs on your desktop", style = t.h2)
