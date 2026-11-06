@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.provider.Settings
+import android.util.Size
 import android.provider.Browser
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -37,6 +39,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private var onScreen by mutableStateOf(false)
@@ -71,7 +76,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /** The system photo picker: one or many, and it needs no permission. Empty when cancelled. */
-    private suspend fun pickPhotos(): List<Uri> {
+    private suspend fun pickFromSystem(): List<Uri> {
         val reply = CompletableDeferred<List<Uri>>()
         pickerReply = reply
         photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -100,7 +105,7 @@ class MainActivity : ComponentActivity() {
             Font(R.font.heebo_medium, FontWeight.Medium),
             Font(R.font.heebo_bold, FontWeight.Bold),
         )
-        val platform = AndroidPlatform(this, ::askForPhotoAccess, ::pickPhotos)
+        val platform = AndroidPlatform(this, ::hasPhotoAccess, ::askForPhotoAccess, ::pickFromSystem)
         setContent { App(platform, heebo, onScreen) }
     }
 }
@@ -109,92 +114,121 @@ private val json = Json { ignoreUnknownKeys = true }
 
 class AndroidPlatform(
     private val context: Context,
+    private val photoAccess: () -> Boolean,
     private val askForPhotoAccess: suspend () -> Boolean,
-    private val pickPhotos: suspend () -> List<Uri>,
+    private val pickFromSystem: suspend () -> List<Uri>,
 ) : Platform {
 
-    override suspend fun loadTabs(): TabList = json.decodeFromString(TabList.serializer(), get("api/tabs"))
+    // The list is polled, and carries every favicon: the desktop answers "unchanged" instead.
+    private var lastTabs: TabList? = null
+    private var lastTabsEtag: String? = null
 
-    override suspend fun loadSound(): SoundStatus = json.decodeFromString(SoundStatus.serializer(), get("api/sound"))
-
-    override suspend fun setSound(onPhone: Boolean): SoundStatus =
-        json.decodeFromString(SoundStatus.serializer(), get("api/sound", "application/json") { it.write("""{"on":$onPhone}""".toByteArray()) })
-
-    override suspend fun sendLastPhoto(): SentPhoto {
-        if (!askForPhotoAccess()) {
-            throw Exception("TabSync needs access to all photos. Allow it under Settings > Apps > TabSync > Permissions.")
-        }
-        return withContext(Dispatchers.IO) { upload(newestPhoto()) }
-    }
-
-    override suspend fun pickAndSendPhotos(onProgress: (done: Int, total: Int) -> Unit): List<SentPhoto> {
-        val uris = pickPhotos()
-        return withContext(Dispatchers.IO) {
-            val sent = mutableListOf<SentPhoto>()
-            for (uri in uris) {
-                onProgress(sent.size, uris.size)
-                try {
-                    sent += upload(pickedPhoto(uri))
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    throw Exception(if (sent.isEmpty()) e.message else "Sent ${sent.size} of ${uris.size}, then: ${e.message}")
-                }
-            }
-            sent
+    override suspend fun loadTabs(): TabList {
+        val reply = request("api/tabs", etag = lastTabsEtag)
+        lastTabs?.takeIf { reply.notModified }?.let { return it }
+        return json.decodeFromString(TabList.serializer(), reply.body).also {
+            lastTabs = it
+            lastTabsEtag = reply.etag
         }
     }
 
-    private suspend fun upload(photo: Photo): SentPhoto {
-        val input = context.contentResolver.openInputStream(photo.uri)
-            ?: throw Exception("The phone would not open ${photo.name}")
-        val body = input.use { source ->
-            get("api/photo?name=${Uri.encode(photo.name)}", photo.mimeType) { source.copyTo(it) }
-        }
-        return json.decodeFromString(SentPhoto.serializer(), body)
-    }
+    override suspend fun loadSound(): SoundStatus =
+        json.decodeFromString(SoundStatus.serializer(), request("api/sound").body)
 
-    private fun pickedPhoto(uri: Uri): Photo {
-        val type = context.contentResolver.getType(uri) ?: throw Exception("The phone did not say what type $uri is")
-        val cursor = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-            ?: throw Exception("The phone did not say what $uri is called")
-        val name = cursor.use {
-            if (!it.moveToFirst()) throw Exception("The phone did not say what $uri is called")
-            it.getString(0)
-        }
-        return Photo(uri, name, type)
-    }
+    override suspend fun setSound(onPhone: Boolean): SoundStatus = json.decodeFromString(
+        SoundStatus.serializer(),
+        request("api/sound", "application/json") { it.write("""{"on":$onPhone}""".toByteArray()) }.body,
+    )
 
-    private class Photo(val uri: Uri, val name: String, val mimeType: String)
+    override fun hasPhotoAccess() = photoAccess()
+
+    override suspend fun requestPhotoAccess() = askForPhotoAccess()
+
+    override fun openAppSettings() {
+        context.startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
+        )
+    }
 
     /**
-     * Newest image in DCIM, which is the camera and screenshots. Not the whole gallery: chat
+     * Newest images in DCIM, which is the camera and screenshots. Not the whole gallery: chat
      * apps save every image they receive, and those are not photos taken on this phone.
      */
-    private fun newestPhoto(): Photo {
+    override suspend fun recentPhotos(limit: Int): List<String> = withContext(Dispatchers.IO) {
         val images = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         val cursor = context.contentResolver.query(
             images,
-            arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME, MediaStore.Images.Media.MIME_TYPE),
+            arrayOf(MediaStore.Images.Media._ID),
             "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?",
             arrayOf("DCIM/%"),
             "${MediaStore.Images.Media.DATE_ADDED} DESC",
         ) ?: throw Exception("The phone's photo library did not answer")
-        return cursor.use {
-            if (!it.moveToFirst()) throw Exception("There are no photos in the phone's DCIM folder")
-            Photo(ContentUris.withAppendedId(images, it.getLong(0)), it.getString(1), it.getString(2))
+        cursor.use {
+            buildList {
+                while (size < limit && it.moveToNext()) add(ContentUris.withAppendedId(images, it.getLong(0)).toString())
+            }
         }
     }
 
-    private suspend fun get(
+    override suspend fun thumbnail(photo: String): ImageBitmap? = withContext(Dispatchers.IO) {
+        context.contentResolver.loadThumbnail(Uri.parse(photo), Size(288, 288), null).asImageBitmap()
+    }
+
+    override suspend fun pickPhotos(): List<String> = pickFromSystem().map { it.toString() }
+
+    override suspend fun sendPhotos(photos: List<String>, onProgress: (Int, Int) -> Unit): List<SentPhoto> =
+        withContext(Dispatchers.IO) {
+            val sent = mutableListOf<SentPhoto>()
+            for (photo in photos) {
+                onProgress(sent.size, photos.size)
+                try {
+                    sent += upload(Uri.parse(photo))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    throw Exception(if (sent.isEmpty()) e.message else "Sent ${sent.size} of ${photos.size}, then: ${e.message}")
+                }
+            }
+            sent
+        }
+
+    private suspend fun upload(uri: Uri): SentPhoto {
+        val resolver = context.contentResolver
+        val type = resolver.getType(uri) ?: throw Exception("The phone did not say what type of file $uri is")
+        val cursor = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, MediaStore.Images.Media.DATE_TAKEN), null, null, null)
+            ?: throw Exception("The phone did not say what $uri is called")
+        val name = cursor.use {
+            if (!it.moveToFirst()) throw Exception("The phone did not say what $uri is called")
+            desktopName(it.getString(0), it.getLong(1))
+        }
+        val input = resolver.openInputStream(uri) ?: throw Exception("The phone would not open $name")
+        val reply = input.use { source ->
+            request("api/photo?name=${Uri.encode(name)}", type) { source.copyTo(it) }
+        }
+        return json.decodeFromString(SentPhoto.serializer(), reply.body)
+    }
+
+    /** The system picker hides real file names and reports "19.jpg", which means nothing on the desktop. */
+    private fun desktopName(name: String, takenAtMs: Long): String {
+        val stem = name.substringBeforeLast('.')
+        if (takenAtMs <= 0 || stem.any { !it.isDigit() }) return name
+        val taken = SimpleDateFormat("yyyy-MM-dd HH-mm-ss", Locale.ROOT).format(Date(takenAtMs))
+        return "Phone photo $taken.${name.substringAfterLast('.')}"
+    }
+
+    private class Reply(val body: String, val etag: String?, val notModified: Boolean)
+
+    private suspend fun request(
         path: String,
         contentType: String? = null,
+        etag: String? = null,
         writeBody: ((OutputStream) -> Unit)? = null,
-    ): String = withContext(Dispatchers.IO) {
+    ): Reply = withContext(Dispatchers.IO) {
         val conn = URL(BuildConfig.API_BASE_URL + path).openConnection() as HttpURLConnection
         conn.connectTimeout = 5000
         conn.readTimeout = 20000
         conn.setRequestProperty("Authorization", "Bearer ${BuildConfig.API_TOKEN}")
+        if (etag != null) conn.setRequestProperty("If-None-Match", etag)
         try {
             if (writeBody != null) {
                 conn.requestMethod = "POST"
@@ -204,6 +238,7 @@ class AndroidPlatform(
                 conn.outputStream.use(writeBody)
             }
             val code = conn.responseCode
+            if (code == HttpURLConnection.HTTP_NOT_MODIFIED) return@withContext Reply("", etag, true)
             val body = (if (code in 200..299) conn.inputStream else conn.errorStream)
                 ?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code !in 200..299) {
@@ -215,7 +250,7 @@ class AndroidPlatform(
                     msg ?: "Desktop answered HTTP $code",
                 )
             }
-            body
+            Reply(body, conn.getHeaderField("ETag"), false)
         } catch (e: java.io.IOException) {
             throw LoadFailure(
                 FailureKind.Offline,

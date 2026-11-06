@@ -1,17 +1,15 @@
 package com.automatelinux.tabSync
 
-import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -19,6 +17,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -30,40 +29,40 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.Chat
+import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.Dashboard
-import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Collections
-import androidx.compose.material.icons.rounded.Image
-import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Computer
+import androidx.compose.material.icons.rounded.Dashboard
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Style
-import androidx.compose.material.icons.rounded.WebAssetOff
-import androidx.compose.material.icons.rounded.WifiOff
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -80,7 +79,9 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -92,8 +93,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -142,130 +141,145 @@ enum class FailureKind {
 
 class LoadFailure(val kind: FailureKind, message: String) : Exception(message)
 
-/** What the platform supplies. */
+/** What the platform supplies. Photos are identified by an opaque id. */
 interface Platform {
     suspend fun loadTabs(): TabList
-    suspend fun loadSound(): SoundStatus
-    /** Moves the computer's sound; answers with where it ended up. */
-    suspend fun setSound(onPhone: Boolean): SoundStatus
-    /** Copies the phone's newest photo to the desktop's Screenshots folder. */
-    suspend fun sendLastPhoto(): SentPhoto
-    /** Lets the user choose photos and copies them the same way; empty if they chose none. */
-    suspend fun pickAndSendPhotos(onProgress: (done: Int, total: Int) -> Unit): List<SentPhoto>
     fun open(url: String)
     /** Opens each URL in its own browser tab; [onOpened] gets the count so far. */
     suspend fun openAll(urls: List<String>, onOpened: (Int) -> Unit)
     fun decodeImage(bytes: ByteArray): ImageBitmap?
+
+    suspend fun loadSound(): SoundStatus
+    /** Moves the computer's sound; answers with where it ended up. */
+    suspend fun setSound(onPhone: Boolean): SoundStatus
+
+    fun hasPhotoAccess(): Boolean
+    suspend fun requestPhotoAccess(): Boolean
+    fun openAppSettings()
+    /** Newest first. */
+    suspend fun recentPhotos(limit: Int): List<String>
+    suspend fun thumbnail(photo: String): ImageBitmap?
+    /** The system picker, for anything older than the strip. Empty if nothing was chosen. */
+    suspend fun pickPhotos(): List<String>
+    /** Copies them to the desktop's Screenshots folder, in order. */
+    suspend fun sendPhotos(photos: List<String>, onProgress: (done: Int, total: Int) -> Unit): List<SentPhoto>
 }
 
-// ── palette (the icon's navy + the travelling tab's teal) ─────────────────────
+// ── palette (the icon's navy + the travelling tab's teal). Teal only ever means state or action. ──
 
 private object C {
     val bg = Color(0xFF0B1033)
-    val bgTop = Color(0xFF17205A)
-    val card = Color(0xFF141B49)
-    val cardEdge = Color(0xFF232C6B)
-    val chip = Color(0xFF1E2766)
+    val surface = Color(0xFF1A2259)
+    val line = Color(0xFF232C6B)
     val text = Color(0xFFEEF1FF)
-    val muted = Color(0xFF98A2D8)
-    val faint = Color(0xFF5F6AA6)
+    val muted = Color(0xFFA5AEE0)
     val teal = Color(0xFF5EE6D3)
     val tealDeep = Color(0xFF1FA6C4)
     val onTeal = Color(0xFF05222B)
     val error = Color(0xFFFF9A8F)
 }
 
-private sealed interface State {
-    data object Loading : State
-    data class Loaded(val list: TabList, val at: String) : State
-    data class Failed(val kind: FailureKind, val message: String) : State
+private sealed interface TabsState {
+    data object Loading : TabsState
+    data class Loaded(val list: TabList) : TabsState
+    data class Failed(val kind: FailureKind, val message: String) : TabsState
 }
 
 private sealed interface Sound {
     data object Loading : Sound
     data class Known(val onPhone: Boolean) : Sound
-    data class Failed(val kind: FailureKind, val message: String) : Sound
+    data class Failed(val message: String) : Sound
 }
 
 private sealed interface PhotoSend {
     data object Idle : PhotoSend
-    data class Sending(val text: String = "Sending…") : PhotoSend
+    data class Sending(val done: Int, val total: Int) : PhotoSend
     data class Sent(val text: String) : PhotoSend
     data class Failed(val message: String) : PhotoSend
 }
 
-/** How often the sound line re-reads the desktop while the app is on screen. */
-private const val SOUND_POLL_MS = 3000L
+private enum class Link { Checking, Connected, Offline }
 
-private fun nowHm(): String {
-    val t = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
-    return "${t.hour.toString().padStart(2, '0')}:${t.minute.toString().padStart(2, '0')}"
-}
+/** Everything on screen follows the desktop by itself, only while the app is visible. */
+private const val SOUND_POLL_MS = 3000L
+private const val TABS_POLL_MS = 5000L
+private const val PHOTO_STRIP_SIZE = 12
 
 @Composable
 fun App(platform: Platform, font: FontFamily = FontFamily.Default, onScreen: Boolean = true) {
     AppTheme {
-        Box(
-            Modifier.fillMaxSize().background(Brush.verticalGradient(0f to C.bgTop, 0.45f to C.bg))
-        ) { TabsScreen(platform, font, onScreen) }
+        Box(Modifier.fillMaxSize().background(C.bg)) { Screen(platform, font, onScreen) }
     }
 }
 
+// State lives here and not in the sections: a LazyColumn disposes what scrolls away, and a
+// selection must not vanish because the user scrolled down to the tabs.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TabsScreen(platform: Platform, font: FontFamily, onScreen: Boolean) {
+private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
     val scope = rememberCoroutineScope()
-    var state by remember { mutableStateOf<State>(State.Loading) }
-    var sound by remember { mutableStateOf<Sound>(Sound.Loading) }
-    var soundTarget by remember { mutableStateOf<Boolean?>(null) } // where a toggle is moving it
-    var soundError by remember { mutableStateOf<String?>(null) } // why the last toggle failed
-    var soundGeneration by remember { mutableStateOf(0) } // a read older than a toggle is stale
-    var lastPhotoSend by remember { mutableStateOf<PhotoSend>(PhotoSend.Idle) }
-    var chosenPhotosSend by remember { mutableStateOf<PhotoSend>(PhotoSend.Idle) }
+    val t = remember(font) { TextStyles(font) }
+    var link by remember { mutableStateOf(Link.Checking) }
+
+    // ── tabs
+    var tabs by remember { mutableStateOf<TabsState>(TabsState.Loading) }
     var refreshing by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf<Int?>(null) } // tabs opened so far during "open all"
+    var openingAll by remember { mutableStateOf<Int?>(null) }
+    var skippedOpen by remember { mutableStateOf(false) }
     val opened = remember { mutableStateMapOf<String, Boolean>() }
 
-    suspend fun load(userPulled: Boolean) {
-        if (userPulled) refreshing = true else state = State.Loading
-        val started = Clock.System.now()
-        val next = try {
-            State.Loaded(platform.loadTabs(), nowHm())
+    suspend fun readTabs() {
+        try {
+            val list = platform.loadTabs()
+            link = Link.Connected
+            tabs = TabsState.Loaded(list)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: LoadFailure) {
-            State.Failed(e.kind, e.message ?: e.kind.name)
+            link = if (e.kind == FailureKind.Offline) Link.Offline else Link.Connected
+            // A dropped connection does not close any tab: keep showing the list we have.
+            if (e.kind != FailureKind.Offline || tabs !is TabsState.Loaded) {
+                tabs = TabsState.Failed(e.kind, e.message ?: e.kind.name)
+            }
         } catch (e: Exception) {
-            State.Failed(FailureKind.Desktop, e.message ?: e.toString())
+            tabs = TabsState.Failed(FailureKind.Desktop, e.message ?: e.toString())
         }
-        // A refresh that answers in 20 ms looks ignored — hold the spinner long enough to read.
-        val spent = (Clock.System.now() - started).inWholeMilliseconds
-        if (userPulled && spent < 650) delay(650 - spent)
-        state = next
-        refreshing = false
     }
 
-    LaunchedEffect(Unit) { load(userPulled = false) }
+    LaunchedEffect(onScreen) {
+        if (!onScreen) return@LaunchedEffect
+        while (true) {
+            readTabs()
+            delay(TABS_POLL_MS)
+        }
+    }
 
-    // Separate from the tabs: a closed Chrome fails them, and says nothing about the sound.
-    // Runs only while the app is on screen, so it also catches up the moment it comes back.
+    // ── sound
+    var sound by remember { mutableStateOf<Sound>(Sound.Loading) }
+    var soundTarget by remember { mutableStateOf<Boolean?>(null) }
+    var soundError by remember { mutableStateOf<String?>(null) }
+    var soundGeneration by remember { mutableStateOf(0) } // a read older than a move is stale
+
     LaunchedEffect(onScreen) {
         if (!onScreen) return@LaunchedEffect
         while (true) {
             val generation = soundGeneration
-            val next = try {
+            val next: Sound? = try {
                 Sound.Known(platform.loadSound().onPhone)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: LoadFailure) {
-                Sound.Failed(e.kind, e.message ?: e.kind.name)
+                // Offline is the status line's to say; the last known position stays visible.
+                if (e.kind == FailureKind.Offline && sound is Sound.Known) null else Sound.Failed(e.message ?: e.kind.name)
             } catch (e: Exception) {
-                Sound.Failed(FailureKind.Desktop, e.message ?: e.toString())
+                Sound.Failed(e.message ?: e.toString())
             }
-            if (soundTarget == null && generation == soundGeneration) sound = next
+            if (next != null && soundTarget == null && generation == soundGeneration) sound = next
             delay(SOUND_POLL_MS)
         }
     }
 
-    fun toggleSound(onPhone: Boolean) {
+    fun moveSound(onPhone: Boolean) {
         if (soundTarget != null) return
         soundTarget = onPhone
         soundError = null
@@ -284,101 +298,172 @@ private fun TabsScreen(platform: Platform, font: FontFamily, onScreen: Boolean) 
         }
     }
 
-    val t = TextStyles(font)
+    // ── photos
+    var photoAccess by remember { mutableStateOf(platform.hasPhotoAccess()) }
+    var photoAccessRefused by remember { mutableStateOf(false) }
+    var recent by remember { mutableStateOf<List<String>>(emptyList()) }
+    val selected = remember { mutableStateListOf<String>() }
+    val onDesktop = remember { mutableStateMapOf<String, Boolean>() }
+    var photoSend by remember { mutableStateOf<PhotoSend>(PhotoSend.Idle) }
+
+    suspend fun readRecent(): List<String> {
+        val fresh = platform.recentPhotos(PHOTO_STRIP_SIZE)
+        recent = fresh
+        selected.retainAll(fresh)
+        return fresh
+    }
+
+    // Coming back from the camera is the moment the strip is out of date.
+    LaunchedEffect(onScreen) {
+        if (!onScreen) return@LaunchedEffect
+        photoAccess = platform.hasPhotoAccess()
+        if (photoAccess) {
+            photoAccessRefused = false
+            try {
+                readRecent()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                photoSend = PhotoSend.Failed(e.message ?: e.toString())
+            }
+        }
+    }
+
+    suspend fun send(photos: List<String>) {
+        photoSend = PhotoSend.Sending(0, photos.size)
+        val sent = platform.sendPhotos(photos) { done, total -> photoSend = PhotoSend.Sending(done, total) }
+        photos.forEach { onDesktop[it] = true }
+        selected.clear()
+        photoSend = PhotoSend.Sent(if (sent.size == 1) "Sent ${sent[0].name} to Screenshots" else "Sent ${sent.size} photos to Screenshots")
+    }
+
+    fun photoAction(action: suspend () -> Unit) {
+        scope.launch {
+            try {
+                action()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                photoSend = PhotoSend.Failed(e.message ?: e.toString())
+            }
+        }
+    }
+
+    suspend fun askForPhotos(): Boolean {
+        photoAccess = platform.requestPhotoAccess()
+        photoAccessRefused = !photoAccess
+        return photoAccess
+    }
+
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
-    Box(Modifier.fillMaxSize()) {
-        PullToRefreshBox(
-            isRefreshing = refreshing,
-            onRefresh = { scope.launch { load(userPulled = true) } },
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            LazyColumn(
-                Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(top = top + 8.dp, bottom = bottom + 120.dp),
-            ) {
-                item {
-                    Header(state, t, onRefresh = { scope.launch { load(userPulled = true) } })
-                    SoundLine(sound, soundTarget, soundError, t, ::toggleSound)
-                    val photoBusy = lastPhotoSend is PhotoSend.Sending || chosenPhotosSend is PhotoSend.Sending
-                    PhotoCard(
-                        "Send last photo to desktop", "Goes to the Screenshots folder", Icons.Rounded.Image,
-                        lastPhotoSend, photoBusy, "send-last-photo", t,
-                    ) {
-                        lastPhotoSend = PhotoSend.Sending()
-                        scope.launch {
-                            lastPhotoSend = try {
-                                PhotoSend.Sent("Sent ${platform.sendLastPhoto().name}")
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                PhotoSend.Failed(e.message ?: e.toString())
+    PullToRefreshBox(
+        isRefreshing = refreshing,
+        onRefresh = {
+            scope.launch {
+                refreshing = true
+                val started = Clock.System.now()
+                readTabs()
+                // A refresh that answers in 20 ms looks ignored.
+                val spent = (Clock.System.now() - started).inWholeMilliseconds
+                if (spent < 500) delay(500 - spent)
+                refreshing = false
+            }
+        },
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = top + 6.dp, bottom = bottom + 28.dp)) {
+            item { TopBar(link, t) }
+            item {
+                SoundSection(sound, soundTarget, link != Link.Offline, soundError, t, ::moveSound)
+            }
+            item {
+                PhotosSection(
+                    platform = platform,
+                    access = photoAccess,
+                    accessRefused = photoAccessRefused,
+                    recent = recent,
+                    selected = selected,
+                    onDesktop = onDesktop,
+                    send = photoSend,
+                    t = t,
+                    onToggle = {
+                        if (it in selected) selected.remove(it) else selected.add(it)
+                        photoSend = PhotoSend.Idle // the last result says nothing about this selection
+                    },
+                    onAllow = {
+                        if (photoAccessRefused) {
+                            platform.openAppSettings()
+                        } else {
+                            photoAction { if (askForPhotos()) readRecent() }
+                        }
+                    },
+                    onChoose = {
+                        photoAction {
+                            val chosen = platform.pickPhotos()
+                            if (chosen.isNotEmpty()) send(chosen)
+                        }
+                    },
+                    onSend = {
+                        photoAction {
+                            if (selected.isNotEmpty()) {
+                                send(selected.toList())
+                            } else {
+                                if (!photoAccess && !askForPhotos()) {
+                                    throw Exception("To send the latest photo, TabSync needs access to all photos.")
+                                }
+                                // Read again: a screenshot taken a second ago is the one that was meant.
+                                val newest = readRecent().firstOrNull()
+                                    ?: throw Exception("There are no photos in the phone's camera or screenshots folders.")
+                                send(listOf(newest))
                             }
                         }
-                    }
-                    PhotoCard(
-                        "Choose photos to send", "One or several, to the same folder", Icons.Rounded.Collections,
-                        chosenPhotosSend, photoBusy, "choose-photos", t,
-                    ) {
-                        chosenPhotosSend = PhotoSend.Sending("Choosing…")
-                        scope.launch {
-                            chosenPhotosSend = try {
-                                val sent = platform.pickAndSendPhotos { done, total ->
-                                    chosenPhotosSend = PhotoSend.Sending("Sending ${done + 1} of $total…")
-                                }
-                                when (sent.size) {
-                                    0 -> PhotoSend.Idle
-                                    1 -> PhotoSend.Sent("Sent ${sent[0].name}")
-                                    else -> PhotoSend.Sent("Sent ${sent.size} photos")
-                                }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                PhotoSend.Failed(e.message ?: e.toString())
-                            }
-                        }
-                    }
+                    },
+                )
+            }
+            when (val s = tabs) {
+                is TabsState.Loading -> {
+                    item { TabsHeading(null, null, t) {} }
+                    items(3) { SkeletonRow() }
                 }
-                when (val s = state) {
-                    is State.Loading -> items(4) { SkeletonCard() }
-                    is State.Failed -> item { ErrorCard(s.kind, s.message, t) { scope.launch { load(false) } } }
-                    is State.Loaded -> {
-                        if (s.list.tabs.isEmpty()) item { EmptyCard(t) }
-                        items(s.list.tabs, key = { it.url }) { tab ->
-                            TabCard(tab, opened[tab.url] == true, platform, t) {
+                is TabsState.Failed -> {
+                    item { TabsHeading(null, null, t) {} }
+                    item { TabsProblem(s.kind, s.message, t) }
+                }
+                is TabsState.Loaded -> {
+                    val list = s.list.tabs
+                    item {
+                        TabsHeading(list.size, openingAll?.let { "Opening $it of ${list.size}…" }, t) {
+                            if (openingAll == null) {
+                                openingAll = 0
+                                scope.launch {
+                                    try {
+                                        platform.openAll(list.map { it.url }) { n ->
+                                            openingAll = n
+                                            opened[list[n - 1].url] = true
+                                        }
+                                    } finally {
+                                        delay(400)
+                                        openingAll = null
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (list.isEmpty()) item { NoTabs(t) }
+                    items(list, key = { it.url }) { tab ->
+                        Column(Modifier.animateItem()) {
+                            TabRow(tab, opened[tab.url] == true, platform, t) {
                                 platform.open(tab.url)
                                 opened[tab.url] = true
                             }
                         }
-                        if (s.list.skipped.isNotEmpty()) item { SkippedSection(s.list.skipped, t) }
                     }
-                }
-            }
-        }
-
-        val loaded = state as? State.Loaded
-        if (loaded != null && loaded.list.tabs.isNotEmpty()) {
-            val tabs = loaded.list.tabs
-            BottomCta(
-                total = tabs.size,
-                progress = progress,
-                allOpened = tabs.all { opened[it.url] == true },
-                t = t,
-                bottomInset = bottom,
-                modifier = Modifier.align(Alignment.BottomCenter),
-            ) {
-                if (progress != null) return@BottomCta
-                progress = 0
-                scope.launch {
-                    try {
-                        platform.openAll(tabs.map { it.url }) { n ->
-                            progress = n
-                            opened[tabs[n - 1].url] = true
+                    if (s.list.skipped.isNotEmpty()) {
+                        item {
+                            StayingBehind(s.list.skipped, skippedOpen, t) { skippedOpen = !skippedOpen }
                         }
-                    } finally {
-                        delay(400)
-                        progress = null
                     }
                 }
             }
@@ -387,174 +472,422 @@ private fun TabsScreen(platform: Platform, font: FontFamily, onScreen: Boolean) 
 }
 
 private class TextStyles(f: FontFamily) {
-    val overline = TextStyle(fontFamily = f, fontWeight = FontWeight.Medium, fontSize = 12.sp, letterSpacing = 1.6.sp, color = C.muted)
-    val hero = TextStyle(fontFamily = f, fontWeight = FontWeight.Bold, fontSize = 44.sp, lineHeight = 48.sp, color = C.text)
-    val heroUnit = TextStyle(fontFamily = f, fontWeight = FontWeight.Medium, fontSize = 22.sp, color = C.muted)
-    val sub = TextStyle(fontFamily = f, fontSize = 14.sp, color = C.muted)
+    val status = TextStyle(fontFamily = f, fontWeight = FontWeight.Medium, fontSize = 13.sp, color = C.muted)
+    val h2 = TextStyle(fontFamily = f, fontWeight = FontWeight.Bold, fontSize = 19.sp, lineHeight = 25.sp, color = C.text)
+    val count = TextStyle(fontFamily = f, fontWeight = FontWeight.Medium, fontSize = 19.sp, lineHeight = 25.sp, color = C.muted)
     val title = TextStyle(fontFamily = f, fontWeight = FontWeight.Medium, fontSize = 16.sp, lineHeight = 21.sp, color = C.text)
-    val host = TextStyle(fontFamily = f, fontSize = 13.sp, color = C.muted)
-    val section = TextStyle(fontFamily = f, fontWeight = FontWeight.Medium, fontSize = 13.sp, letterSpacing = 1.2.sp, color = C.faint)
-    val skipped = TextStyle(fontFamily = f, fontSize = 14.sp, color = C.muted)
-    val cta = TextStyle(fontFamily = f, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = C.onTeal)
+    val small = TextStyle(fontFamily = f, fontSize = 13.sp, lineHeight = 18.sp, color = C.muted)
     val body = TextStyle(fontFamily = f, fontSize = 15.sp, lineHeight = 21.sp, color = C.muted)
-    val h2 = TextStyle(fontFamily = f, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = C.text)
+    val side = TextStyle(fontFamily = f, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+    val button = TextStyle(fontFamily = f, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = C.onTeal)
+    val pill = TextStyle(fontFamily = f, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = C.teal)
+    val mark = TextStyle(fontFamily = f, fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color.White)
 }
 
-// ── header: the desktop → phone strip and the one number that matters ────────
+private val SIDE = 20.dp
+private val SECTION_GAP = 30.dp
+
+// ── top: the app's mark, and whether anything below can be believed ───────────
 
 @Composable
-private fun Header(state: State, t: TextStyles, onRefresh: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp).padding(top = 10.dp, bottom = 6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TransferGlyph(active = state is State.Loading, modifier = Modifier.width(112.dp).height(34.dp))
-            Spacer(Modifier.weight(1f))
-            Box(
-                Modifier.size(42.dp).clip(CircleShape).background(C.chip).clickable(onClick = onRefresh)
-                    .testTag("refresh-tabs"),
-                contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Rounded.Refresh, "Refresh", tint = C.text, modifier = Modifier.size(22.dp)) }
+private fun TopBar(link: Link, t: TextStyles) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = SIDE, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        TransferGlyph(active = link == Link.Checking, modifier = Modifier.width(92.dp).height(28.dp))
+        Spacer(Modifier.weight(1f))
+        val tint by animateColorAsState(
+            when (link) {
+                Link.Checking -> C.muted
+                Link.Connected -> C.teal
+                Link.Offline -> C.error
+            },
+            tween(200),
+        )
+        Box(Modifier.size(8.dp).clip(CircleShape).background(tint))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            when (link) {
+                Link.Checking -> "Looking for your desktop"
+                Link.Connected -> "Desktop connected"
+                Link.Offline -> "Can't reach the desktop"
+            },
+            style = t.status.copy(color = if (link == Link.Offline) C.error else C.muted),
+        )
+    }
+}
+
+// ── sound: two places it can be, and a knob that sits in one of them ──────────
+
+@Composable
+private fun SoundSection(
+    sound: Sound,
+    target: Boolean?,
+    reachable: Boolean,
+    error: String?,
+    t: TextStyles,
+    onMove: (Boolean) -> Unit,
+) {
+    val onPhone = target ?: (sound as? Sound.Known)?.onPhone
+    val enabled = reachable && target == null && sound is Sound.Known
+    Column(Modifier.fillMaxWidth().padding(start = SIDE, end = SIDE, top = 14.dp)) {
+        Text("Computer sound plays on", style = t.h2)
+        Spacer(Modifier.height(12.dp))
+        BoxWithConstraints(
+            Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp)).background(C.surface).selectableGroup(),
+        ) {
+            val half = maxWidth / 2
+            val knobX by animateDpAsState(if (onPhone == true) half else 0.dp, tween(220, easing = FastOutSlowInEasing))
+            val knobAlpha by animateFloatAsState(if (target != null || !reachable) .55f else 1f, tween(150))
+            if (onPhone != null) {
+                Box(
+                    Modifier.offset(x = knobX).width(half).fillMaxHeight().padding(4.dp).alpha(knobAlpha)
+                        .clip(RoundedCornerShape(24.dp)).background(C.teal),
+                )
+            }
+            Row(Modifier.fillMaxSize()) {
+                SoundSide("Computer", Icons.Rounded.Computer, onPhone == false, enabled, "sound-on-computer", t, Modifier.weight(1f)) { onMove(false) }
+                SoundSide("This phone", Icons.Rounded.PhoneAndroid, onPhone == true, enabled, "sound-on-phone", t, Modifier.weight(1f)) { onMove(true) }
+            }
         }
-        Spacer(Modifier.height(22.dp))
-        Text("ON YOUR DESKTOP", style = t.overline)
-        Spacer(Modifier.height(2.dp))
-        AnimatedContent(
-            targetState = state,
-            contentKey = { it::class },
-            transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(160)) },
-        ) { s ->
-            Column {
-                when (s) {
-                    is State.Loading -> {
-                        Text("…", style = t.hero)
-                        Text("Reading the desktop's Chrome", style = t.sub)
-                    }
-                    is State.Failed -> {
-                        Text("—", style = t.hero)
-                        Text(
-                            if (s.kind == FailureKind.Offline) "Not connected" else "Connected · can't read Chrome",
-                            style = t.sub,
-                        )
-                    }
-                    is State.Loaded -> {
-                        val n = s.list.tabs.size
-                        Row(verticalAlignment = Alignment.Bottom) {
-                            Text("$n", style = t.hero)
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (n == 1) "tab" else "tabs", style = t.heroUnit, modifier = Modifier.padding(bottom = 6.dp))
-                        }
-                        Text("Updated ${s.at} · pull down to refresh", style = t.sub)
-                    }
+        val problem = error ?: (sound as? Sound.Failed)?.message
+        if (problem != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(problem, style = t.small.copy(color = C.error))
+        }
+    }
+}
+
+@Composable
+private fun SoundSide(
+    label: String,
+    icon: ImageVector,
+    selected: Boolean,
+    enabled: Boolean,
+    tag: String,
+    t: TextStyles,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    val tint by animateColorAsState(if (selected) C.onTeal else C.text, tween(200))
+    Row(
+        modifier.fillMaxHeight().clip(RoundedCornerShape(28.dp))
+            .selectable(selected = selected, enabled = enabled && !selected, role = Role.RadioButton, onClick = onClick)
+            .testTag(tag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(19.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(label, style = t.side.copy(color = tint))
+    }
+}
+
+// ── photos: see what is about to leave the phone ──────────────────────────────
+
+@Composable
+private fun PhotosSection(
+    platform: Platform,
+    access: Boolean,
+    accessRefused: Boolean,
+    recent: List<String>,
+    selected: List<String>,
+    onDesktop: Map<String, Boolean>,
+    send: PhotoSend,
+    t: TextStyles,
+    onToggle: (String) -> Unit,
+    onAllow: () -> Unit,
+    onChoose: () -> Unit,
+    onSend: () -> Unit,
+) {
+    val sending = send is PhotoSend.Sending
+    Column(Modifier.fillMaxWidth().padding(top = SECTION_GAP)) {
+        Text("Send photos to your desktop", style = t.h2, modifier = Modifier.padding(horizontal = SIDE))
+        Spacer(Modifier.height(12.dp))
+        if (access) {
+            LazyRow(contentPadding = PaddingValues(horizontal = SIDE), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(recent, key = { it }) { photo ->
+                    PhotoTile(
+                        photo = photo,
+                        platform = platform,
+                        isSelected = photo in selected,
+                        // With nothing selected the button sends this one, so the strip says so.
+                        isLatestTarget = selected.isEmpty() && photo == recent.first(),
+                        isOnDesktop = onDesktop[photo] == true,
+                        enabled = !sending,
+                        t = t,
+                    ) { onToggle(photo) }
+                }
+                item { ChooseTile(!sending, t, onChoose) }
+            }
+        } else {
+            Row(Modifier.padding(horizontal = SIDE), verticalAlignment = Alignment.CenterVertically) {
+                ChooseTile(!sending, t, onChoose)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (accessRefused) "Turn on access to all photos in Settings to see recent ones here." else "See your recent photos here, ready to send.",
+                        style = t.small,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Box(
+                        Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onAllow).testTag("allow-photos")
+                            .padding(vertical = 6.dp),
+                    ) { Text(if (accessRefused) "Open Settings" else "Allow access", style = t.pill) }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        val empty = access && recent.isEmpty()
+        val canSend = !sending && !empty
+        val fraction by animateFloatAsState(
+            if (send is PhotoSend.Sending) (send.done + .5f) / send.total else 0f,
+            tween(250),
+        )
+        Box(
+            Modifier.padding(horizontal = SIDE).fillMaxWidth().height(52.dp)
+                .alpha(if (empty) .5f else 1f)
+                .clip(RoundedCornerShape(26.dp))
+                .background(if (sending) C.tealDeep else C.teal)
+                .clickable(enabled = canSend, onClick = onSend)
+                .testTag("send-photos"),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (sending) {
+                Box(Modifier.fillMaxHeight().fillMaxWidth(fraction).align(Alignment.CenterStart).background(C.teal))
+            }
+            Text(
+                when {
+                    send is PhotoSend.Sending && send.total > 1 -> "Sending ${send.done + 1} of ${send.total}…"
+                    send is PhotoSend.Sending -> "Sending…"
+                    empty -> "No photos yet"
+                    selected.isEmpty() -> "Send latest photo"
+                    selected.size == 1 -> "Send this photo"
+                    else -> "Send ${selected.size} photos"
+                },
+                style = t.button,
+            )
+        }
+        when (send) {
+            is PhotoSend.Sent -> Text(send.text, style = t.small.copy(color = C.teal), modifier = Modifier.padding(start = SIDE, end = SIDE, top = 8.dp))
+            is PhotoSend.Failed -> Text(send.message, style = t.small.copy(color = C.error), modifier = Modifier.padding(start = SIDE, end = SIDE, top = 8.dp))
+            else -> {}
+        }
+    }
+}
+
+private val TILE = 96.dp
+
+@Composable
+private fun PhotoTile(
+    photo: String,
+    platform: Platform,
+    isSelected: Boolean,
+    isLatestTarget: Boolean,
+    isOnDesktop: Boolean,
+    enabled: Boolean,
+    t: TextStyles,
+    onClick: () -> Unit,
+) {
+    val bitmap by produceState<ImageBitmap?>(null, photo) {
+        value = try {
+            platform.thumbnail(photo)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null // a photo the phone can't preview can still be sent
+        }
+    }
+    val ring by animateColorAsState(if (isSelected || isLatestTarget) C.teal else Color.Transparent, tween(150))
+    Box(
+        Modifier.size(TILE).clip(RoundedCornerShape(12.dp)).background(C.surface)
+            .clickable(enabled = enabled, onClick = onClick).testTag("photo-tile"),
+    ) {
+        bitmap?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
+        Box(Modifier.fillMaxSize().border(if (isSelected) 3.dp else 2.dp, ring, RoundedCornerShape(12.dp)))
+        if (isSelected) {
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(6.dp).size(24.dp).clip(CircleShape).background(C.teal),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.Check, "Selected", tint = C.onTeal, modifier = Modifier.size(17.dp)) }
+        }
+        if (isLatestTarget) {
+            Box(
+                Modifier.align(Alignment.BottomStart).padding(6.dp).clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = .62f)).padding(horizontal = 6.dp, vertical = 2.dp),
+            ) { Text("Latest", style = t.mark) }
+        }
+        if (isOnDesktop) {
+            Box(
+                Modifier.align(Alignment.BottomEnd).padding(6.dp).size(24.dp).clip(CircleShape)
+                    .background(Color.Black.copy(alpha = .62f)),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.Computer, "Sent to the desktop", tint = C.teal, modifier = Modifier.size(15.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun ChooseTile(enabled: Boolean, t: TextStyles, onClick: () -> Unit) {
+    Column(
+        Modifier.size(TILE).clip(RoundedCornerShape(12.dp)).background(C.surface)
+            .clickable(enabled = enabled, onClick = onClick).testTag("choose-photos"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(Icons.Rounded.Collections, null, tint = C.text, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.height(6.dp))
+        Text("All photos", style = t.small.copy(color = C.text))
+    }
+}
+
+// ── tabs: a plain live list ───────────────────────────────────────────────────
+
+@Composable
+private fun TabsHeading(count: Int?, progress: String?, t: TextStyles, onOpenAll: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = SIDE, end = SIDE, top = SECTION_GAP, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Tabs on your desktop", style = t.h2)
+        if (count != null && count > 0) {
+            Spacer(Modifier.width(8.dp))
+            Text("$count", style = t.count)
+        }
+        Spacer(Modifier.weight(1f))
+        if (progress != null) {
+            Text(progress, style = t.small)
+        } else if (count != null && count > 1) {
+            Box(
+                Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onOpenAll).testTag("open-all-tabs")
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+            ) { Text("Open all", style = t.pill) }
+        }
+    }
+}
+
+@Composable
+private fun TabRow(tab: Tab, opened: Boolean, platform: Platform, t: TextStyles, onOpen: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onOpen).testTag("open-tab").padding(horizontal = SIDE, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Favicon(tab, platform, t)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(tab.title, style = t.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(2.dp))
+            Text(tab.host, style = t.small, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (opened) {
+            Spacer(Modifier.width(10.dp))
+            Icon(Icons.Rounded.Check, "Opened on this phone", tint = C.teal, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalEncodingApi::class)
+@Composable
+private fun Favicon(tab: Tab, platform: Platform, t: TextStyles) {
+    val bitmap = remember(tab.icon) {
+        tab.icon?.substringAfter("base64,", "")?.takeIf { it.isNotEmpty() }
+            ?.let { runCatching { platform.decodeImage(Base64.decode(it)) }.getOrNull() }
+    }
+    Box(
+        Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(if (bitmap != null) Color(0xFFF4F6FF) else monogramColor(tab.host)),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (bitmap != null) {
+            Image(bitmap, contentDescription = null, modifier = Modifier.size(24.dp))
+        } else {
+            val letter = tab.title.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "•"
+            Text(letter, style = t.h2.copy(fontSize = 18.sp, color = Color.White))
+        }
+    }
+}
+
+/** A stable, muted colour per site so tabs without a favicon are still told apart. */
+private fun monogramColor(host: String): Color {
+    val palette = listOf(0xFF3D4FB8, 0xFF2E7D8C, 0xFF7A4FB8, 0xFFB8644F, 0xFF4F8CB8, 0xFF8C6E2E)
+    return Color(palette[(host.hashCode() and 0x7fffffff) % palette.size])
+}
+
+@Composable
+private fun SkeletonRow() {
+    val a by rememberInfiniteTransition().animateFloat(
+        .35f, .7f, infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Reverse)
+    )
+    Row(Modifier.fillMaxWidth().padding(horizontal = SIDE, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(C.surface.copy(alpha = a)))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Box(Modifier.fillMaxWidth(.75f).height(14.dp).clip(RoundedCornerShape(7.dp)).background(C.surface.copy(alpha = a)))
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.fillMaxWidth(.4f).height(11.dp).clip(RoundedCornerShape(6.dp)).background(C.surface.copy(alpha = a)))
+        }
+    }
+}
+
+/** No "try again" button: the screen is already trying again every few seconds. */
+@Composable
+private fun TabsProblem(kind: FailureKind, message: String, t: TextStyles) {
+    val title = when (kind) {
+        FailureKind.Offline -> "No connection to the desktop"
+        FailureKind.ChromeClosed -> "Chrome is closed on the desktop"
+        FailureKind.ChromeNoDebugging -> "Chrome on the desktop isn't sharing its tabs"
+        FailureKind.Desktop -> "The desktop couldn't list its tabs"
+    }
+    val body = when (kind) {
+        FailureKind.ChromeClosed -> "Open it there and its tabs will appear here."
+        else -> message
+    }
+    Column(Modifier.fillMaxWidth().padding(horizontal = SIDE, vertical = 8.dp)) {
+        Text(title, style = t.title)
+        Spacer(Modifier.height(4.dp))
+        Text(body, style = t.body)
+    }
+}
+
+@Composable
+private fun NoTabs(t: TextStyles) {
+    Text(
+        "Nothing to bring over. Tabs you open on the desktop will appear here.",
+        style = t.body,
+        modifier = Modifier.padding(horizontal = SIDE, vertical = 8.dp),
+    )
+}
+
+/** Why a tab is missing from the list has an answer, but not one worth a screenful. */
+@Composable
+private fun StayingBehind(skipped: List<Skipped>, open: Boolean, t: TextStyles, onToggle: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+        HorizontalDivider(Modifier.padding(horizontal = SIDE), color = C.line)
+        Row(
+            Modifier.fillMaxWidth().clickable(onClick = onToggle).testTag("toggle-staying-tabs")
+                .padding(horizontal = SIDE, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (skipped.size == 1) "1 tab stays on the desktop" else "${skipped.size} tabs stay on the desktop",
+                style = t.body,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = C.muted, modifier = Modifier.size(22.dp))
+        }
+        if (open) {
+            skipped.forEach { s ->
+                Row(Modifier.fillMaxWidth().padding(horizontal = SIDE, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(reasonIcon(s.reason), null, tint = C.muted, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text(s.title, style = t.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 }
             }
         }
     }
 }
 
-/** Where the computer's sound is going, and the switch that moves it. */
-@Composable
-private fun SoundLine(sound: Sound, target: Boolean?, error: String?, t: TextStyles, onToggle: (Boolean) -> Unit) {
-    val known = sound as? Sound.Known
-    val onPhone = target ?: known?.onPhone
-    val tint = when {
-        sound is Sound.Failed -> C.error
-        onPhone == true -> C.teal
-        onPhone == false -> C.muted
-        else -> C.faint
-    }
-    val text = when {
-        target == true -> "Moving computer sound to this phone…"
-        target == false -> "Moving computer sound to the computer…"
-        known != null -> if (known.onPhone) "Computer sound on this phone" else "Computer sound on the computer"
-        // Offline: the card below already explains the broken link.
-        sound is Sound.Failed -> if (sound.kind == FailureKind.Offline) "Computer sound: unknown" else "Computer sound: ${sound.message}"
-        else -> "Computer sound: …"
-    }
-    Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 16.dp, bottom = 12.dp)) {
-        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.AutoMirrored.Rounded.VolumeUp, null, tint = tint, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(text, style = t.sub.copy(color = tint), modifier = Modifier.weight(1f))
-            // Unknown state: no switch, because flipping it would be a guess.
-            if (onPhone != null) {
-                Spacer(Modifier.width(8.dp))
-                Switch(
-                    checked = onPhone,
-                    onCheckedChange = onToggle,
-                    enabled = target == null,
-                    modifier = Modifier.testTag("toggle-computer-sound"),
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = C.onTeal,
-                        checkedTrackColor = C.teal,
-                        uncheckedThumbColor = C.muted,
-                        uncheckedTrackColor = C.chip,
-                        uncheckedBorderColor = C.cardEdge,
-                        disabledCheckedThumbColor = C.onTeal,
-                        disabledCheckedTrackColor = C.teal.copy(alpha = .5f),
-                        disabledUncheckedThumbColor = C.faint,
-                        disabledUncheckedTrackColor = C.chip.copy(alpha = .5f),
-                        disabledUncheckedBorderColor = C.cardEdge,
-                    ),
-                )
-            }
-        }
-        if (error != null) Text(error, style = t.sub.copy(color = C.error))
-    }
-}
-
-/** One photo action. [busy] covers both cards: only one send runs at a time. */
-@Composable
-private fun PhotoCard(
-    title: String,
-    idleText: String,
-    icon: ImageVector,
-    send: PhotoSend,
-    busy: Boolean,
-    tag: String,
-    t: TextStyles,
-    onClick: () -> Unit,
-) {
-    Row(
-        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 10.dp)
-            .alpha(if (busy) .6f else 1f)
-            .clip(RoundedCornerShape(18.dp))
-            .background(C.card)
-            .border(1.dp, if (send is PhotoSend.Sent) C.teal.copy(alpha = .45f) else C.cardEdge, RoundedCornerShape(18.dp))
-            .clickable(enabled = !busy, onClick = onClick)
-            .testTag(tag)
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(C.chip), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = C.teal, modifier = Modifier.size(24.dp))
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = t.title)
-            Spacer(Modifier.height(3.dp))
-            when (send) {
-                PhotoSend.Idle -> Text(idleText, style = t.host)
-                is PhotoSend.Sending -> Text(send.text, style = t.host)
-                is PhotoSend.Sent -> Text(send.text, style = t.host.copy(color = C.teal))
-                is PhotoSend.Failed -> Text(send.message, style = t.host.copy(color = C.error))
-            }
-        }
-        Spacer(Modifier.width(10.dp))
-        Box(
-            Modifier.size(36.dp).clip(CircleShape).background(if (send is PhotoSend.Sent) C.teal else C.chip),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (send is PhotoSend.Sending) {
-                CircularProgressIndicator(Modifier.size(18.dp), color = C.teal, strokeWidth = 2.dp)
-            } else {
-                Icon(
-                    if (send is PhotoSend.Sent) Icons.Rounded.Check else Icons.AutoMirrored.Rounded.ArrowForward,
-                    contentDescription = null,
-                    tint = if (send is PhotoSend.Sent) C.onTeal else C.text,
-                    modifier = Modifier.size(19.dp),
-                )
-            }
-        }
-    }
+private fun reasonIcon(reason: String): ImageVector = when (reason) {
+    "whatsapp" -> Icons.AutoMirrored.Rounded.Chat
+    "dashboard" -> Icons.Rounded.Dashboard
+    else -> Icons.Rounded.Style
 }
 
 /** Monitor ⋯⋯ phone, with a teal tab that travels along the dashes while loading. */
@@ -569,7 +902,7 @@ private fun TransferGlyph(active: Boolean, modifier: Modifier) {
         val u = h / 34f
         // monitor
         drawRoundRect(Color(0xFFE8EEFF), Offset(0f, 2 * u), Size(40 * u, 26 * u), CornerRadius(4 * u))
-        drawRoundRect(C.bgTop, Offset(3 * u, 8 * u), Size(34 * u, 17 * u), CornerRadius(1.5f * u))
+        drawRoundRect(C.surface, Offset(3 * u, 8 * u), Size(34 * u, 17 * u), CornerRadius(1.5f * u))
         drawRoundRect(C.teal, Offset(15 * u, 4.5f * u), Size(9 * u, 3.5f * u), CornerRadius(1.2f * u))
         drawRect(Color(0xFFC9D4F5), Offset(17 * u, 28 * u), Size(6 * u, 3 * u))
         drawRoundRect(Color(0xFFC9D4F5), Offset(12 * u, 31 * u), Size(16 * u, 2.5f * u), CornerRadius(1.2f * u))
@@ -577,7 +910,7 @@ private fun TransferGlyph(active: Boolean, modifier: Modifier) {
         val x0 = 46 * u
         val x1 = size.width - 26 * u
         drawLine(
-            C.faint, Offset(x0, 16 * u), Offset(x1, 16 * u), strokeWidth = 2 * u, cap = StrokeCap.Round,
+            C.muted, Offset(x0, 16 * u), Offset(x1, 16 * u), strokeWidth = 2 * u, cap = StrokeCap.Round,
             pathEffect = PathEffect.dashPathEffect(floatArrayOf(3 * u, 4 * u)),
         )
         // the travelling tab
@@ -594,199 +927,3 @@ private fun TransferGlyph(active: Boolean, modifier: Modifier) {
     }
 }
 
-// ── cards ─────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun TabCard(tab: Tab, opened: Boolean, platform: Platform, t: TextStyles, onOpen: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(C.card)
-            .border(1.dp, if (opened) C.teal.copy(alpha = .45f) else C.cardEdge, RoundedCornerShape(18.dp))
-            .clickable(onClick = onOpen)
-            .testTag("open-tab")
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Favicon(tab, platform, t)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(tab.title, style = t.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(3.dp))
-            Text(tab.host, style = t.host, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Spacer(Modifier.width(10.dp))
-        Box(
-            Modifier.size(36.dp).clip(CircleShape).background(if (opened) C.teal else C.chip),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                if (opened) Icons.Rounded.Check else Icons.AutoMirrored.Rounded.ArrowForward,
-                contentDescription = if (opened) "Opened" else "Open on phone",
-                tint = if (opened) C.onTeal else C.text,
-                modifier = Modifier.size(19.dp),
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalEncodingApi::class)
-@Composable
-private fun Favicon(tab: Tab, platform: Platform, t: TextStyles) {
-    val bitmap = remember(tab.icon) {
-        tab.icon?.substringAfter("base64,", "")?.takeIf { it.isNotEmpty() }
-            ?.let { runCatching { platform.decodeImage(Base64.decode(it)) }.getOrNull() }
-    }
-    Box(
-        Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(if (bitmap != null) Color(0xFFF4F6FF) else monogramColor(tab.host)),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (bitmap != null) {
-            Image(bitmap, contentDescription = null, modifier = Modifier.size(26.dp))
-        } else {
-            val letter = tab.title.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "•"
-            Text(letter, style = t.h2.copy(fontSize = 19.sp, color = Color.White))
-        }
-    }
-}
-
-/** A stable, muted colour per site so tabs without a favicon are still told apart. */
-private fun monogramColor(host: String): Color {
-    val palette = listOf(0xFF3D4FB8, 0xFF2E7D8C, 0xFF7A4FB8, 0xFFB8644F, 0xFF4F8CB8, 0xFF8C6E2E)
-    return Color(palette[(host.hashCode() and 0x7fffffff) % palette.size])
-}
-
-@Composable
-private fun SkeletonCard() {
-    val a by rememberInfiniteTransition().animateFloat(
-        .35f, .7f, infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Reverse)
-    )
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp)
-            .clip(RoundedCornerShape(18.dp)).background(C.card).padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(C.chip.copy(alpha = a)))
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Box(Modifier.fillMaxWidth(.75f).height(14.dp).clip(RoundedCornerShape(7.dp)).background(C.chip.copy(alpha = a)))
-            Spacer(Modifier.height(8.dp))
-            Box(Modifier.fillMaxWidth(.4f).height(11.dp).clip(RoundedCornerShape(6.dp)).background(C.chip.copy(alpha = a)))
-        }
-    }
-}
-
-@Composable
-private fun ErrorCard(kind: FailureKind, message: String, t: TextStyles, onRetry: () -> Unit) {
-    val icon = when (kind) {
-        FailureKind.Offline -> Icons.Rounded.WifiOff
-        FailureKind.ChromeClosed, FailureKind.ChromeNoDebugging -> Icons.Rounded.WebAssetOff
-        FailureKind.Desktop -> Icons.Rounded.ErrorOutline
-    }
-    val title = when (kind) {
-        FailureKind.Offline -> "Can't reach the desktop"
-        FailureKind.ChromeClosed -> "Chrome is closed on the desktop"
-        FailureKind.ChromeNoDebugging -> "Chrome on the desktop isn't sharing its tabs"
-        FailureKind.Desktop -> "The desktop couldn't list its tabs"
-    }
-    val body = when (kind) {
-        FailureKind.ChromeClosed -> "The desktop is reachable — there are just no tabs to read. Open Chrome there, then try again."
-        else -> message
-    }
-    Column(
-        Modifier.fillMaxWidth().padding(16.dp).clip(RoundedCornerShape(20.dp)).background(C.card)
-            .border(1.dp, C.cardEdge, RoundedCornerShape(20.dp)).padding(22.dp),
-    ) {
-        Icon(icon, null, tint = C.error, modifier = Modifier.size(30.dp))
-        Spacer(Modifier.height(12.dp))
-        Text(title, style = t.h2)
-        Spacer(Modifier.height(6.dp))
-        Text(body, style = t.body)
-        Spacer(Modifier.height(18.dp))
-        Box(
-            Modifier.clip(RoundedCornerShape(50)).background(C.chip).clickable(onClick = onRetry)
-                .testTag("retry-tabs").padding(horizontal = 22.dp, vertical = 12.dp),
-        ) { Text("Try again", style = t.title) }
-    }
-}
-
-@Composable
-private fun EmptyCard(t: TextStyles) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp)) {
-        Text("Nothing to bring over", style = t.h2)
-        Spacer(Modifier.height(6.dp))
-        Text("Every tab open on the desktop is one that stays there.", style = t.body)
-    }
-}
-
-@Composable
-private fun SkippedSection(skipped: List<Skipped>, t: TextStyles) {
-    Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 26.dp)) {
-        Text("STAYING ON THE DESKTOP", style = t.section)
-        Spacer(Modifier.height(10.dp))
-        skipped.forEach { s ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(C.chip), contentAlignment = Alignment.Center) {
-                    Icon(reasonIcon(s.reason), null, tint = C.muted, modifier = Modifier.size(17.dp))
-                }
-                Spacer(Modifier.width(12.dp))
-                Text(s.title, style = t.skipped, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            }
-        }
-    }
-}
-
-private fun reasonIcon(reason: String): ImageVector = when (reason) {
-    "whatsapp" -> Icons.Rounded.Chat
-    "dashboard" -> Icons.Rounded.Dashboard
-    "solitaire" -> Icons.Rounded.Style
-    else -> Icons.Rounded.Style
-}
-
-// ── the one action ───────────────────────────────────────────────────────────
-
-@Composable
-private fun BottomCta(
-    total: Int,
-    progress: Int?,
-    allOpened: Boolean,
-    t: TextStyles,
-    bottomInset: androidx.compose.ui.unit.Dp,
-    modifier: Modifier,
-    onClick: () -> Unit,
-) {
-    val frac by animateFloatAsState(if (progress == null) 0f else progress / total.toFloat(), tween(250))
-    Box(
-        modifier.fillMaxWidth()
-            .background(Brush.verticalGradient(listOf(Color.Transparent, C.bg.copy(alpha = .92f), C.bg)))
-            .padding(start = 16.dp, end = 16.dp, top = 28.dp, bottom = bottomInset + 14.dp),
-    ) {
-        Box(
-            Modifier.fillMaxWidth().height(60.dp).clip(RoundedCornerShape(30.dp))
-                .background(Brush.horizontalGradient(listOf(C.teal, C.tealDeep)))
-                .clickable(enabled = progress == null, onClick = onClick)
-                .testTag("open-all-tabs"),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (progress != null) {
-                Box(Modifier.fillMaxHeight().fillMaxWidth(frac).align(Alignment.CenterStart).background(Color.White.copy(alpha = .28f)))
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    if (allOpened && progress == null) Icons.Rounded.Check else Icons.Rounded.PhoneAndroid,
-                    null, tint = C.onTeal, modifier = Modifier.size(21.dp),
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    when {
-                        progress != null -> "Opening ${progress.coerceAtLeast(1).coerceAtMost(total)} of $total…"
-                        allOpened -> "All $total open · open again"
-                        total == 1 -> "Open it on this phone"
-                        else -> "Open all $total on this phone"
-                    },
-                    style = t.cta,
-                )
-            }
-        }
-    }
-}

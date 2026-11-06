@@ -8,13 +8,15 @@ Move Chrome tabs between the desktop and the phone.
 - **Phone → desktop**: `phoneTabsToDesktop [--dry-run]` in any terminal
   (`scripts/phone-to-desktop.mjs`, via adb + phone Chrome's DevTools socket).
 
-The app also shows where the computer's sound is going and has a switch to move it, both
-through `desktop/phoneAudio.sh`: `GET /api/sound` reads its status, polled every 3 s while the
-app is on screen, and `POST /api/sound {"on": true|false}` runs `on` or `off`.
+The app is one live screen, polling the desktop only while it is visible:
 
-Two buttons copy photos to the desktop's `~/Pictures/Screenshots` through
-`POST /api/photo?name=`: one sends the newest image in `DCIM` (camera and screenshots), the other
-opens the system photo picker for one or several. A copy never replaces a file.
+- **Computer sound**: a two-position control, through `desktop/phoneAudio.sh` (`GET /api/sound`
+  reads its status, `POST /api/sound {"on": true|false}` runs `on` or `off`).
+- **Photos**: a strip of the 12 newest images in `DCIM` (camera and screenshots). The button sends
+  the latest in one tap, or whichever were selected; *All photos* opens the system picker for
+  older ones. They land in the desktop's `~/Pictures/Screenshots` through
+  `POST /api/photo?name=`, which never replaces a file.
+- **Tabs**: `GET /api/tabs`, with an ETag so an unchanged list costs almost nothing to poll.
 
 Both directions share one filter, `lib/tabs.mjs`: **solitaire, dashboard and WhatsApp
 tabs stay put**, as do non-web pages; `localhost` URLs become `10.7.0.2` for the phone.
