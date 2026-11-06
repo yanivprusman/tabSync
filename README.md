@@ -20,7 +20,7 @@ The app is one live screen, polling the desktop only while it is visible:
   older ones. They land in the desktop's `~/Pictures/Screenshots` through
   `POST /api/photo?name=`, which never replaces a file.
 - **Tabs**: `GET /api/tabs`, with an ETag so an unchanged list costs almost nothing to poll.
-- **Desktop keyboard or mouse not working?**: a quiet line at the very bottom. When the ASM1074
+- **More → Fix desktop keyboard and mouse**: collapsed at the very bottom. When the ASM1074
   hub behind them hangs, the kernel gives up on `usb1-port10`. `POST /api/usb-reset` power-cycles
   that port and answers `{"keyboard": bool, "mouse": bool}` with what came back. Anything on the
   hub drops for up to about 10 seconds, so it is only for when they are already dead.

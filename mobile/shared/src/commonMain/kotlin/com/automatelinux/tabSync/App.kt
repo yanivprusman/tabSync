@@ -431,7 +431,8 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
         return photoAccess
     }
 
-    // ── keyboard and mouse
+    // ── more: keyboard and mouse
+    var moreOpen by remember { mutableStateOf(false) }
     var usbFix by remember { mutableStateOf<UsbFix>(UsbFix.Idle) }
 
     fun fixUsb() {
@@ -560,9 +561,9 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
                     }
                 }
             }
-            // Last on the screen, whatever state the tabs are in: rarely needed, but it is needed
-            // exactly when the desktop has no other way to be reached.
-            item { UsbFixRow(usbFix, link != Link.Offline, t, ::fixUsb) }
+            // Last on the screen, whatever state the tabs are in: rarely needed, but the USB fix is
+            // needed exactly when the desktop has no other way to be reached.
+            item { MoreSection(moreOpen, usbFix, link != Link.Offline, t, { moreOpen = !moreOpen }, ::fixUsb) }
         }
     }
 }
@@ -1046,18 +1047,37 @@ private fun StayingBehind(skipped: List<Skipped>, open: Boolean, t: TextStyles, 
     }
 }
 
-/** A quiet line at the very bottom, not a section: it is for the rare day the USB hub hangs. */
+/** Collapsed at the very bottom: what is in here is for rare days, not for every visit. */
+@Composable
+private fun MoreSection(open: Boolean, fix: UsbFix, reachable: Boolean, t: TextStyles, onToggle: () -> Unit, onFix: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = SECTION_GAP)) {
+        HorizontalDivider(Modifier.padding(horizontal = SIDE), color = C.line)
+        Row(
+            Modifier.fillMaxWidth().clickable(onClick = onToggle).testTag("toggle-more")
+                .padding(horizontal = SIDE, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("More", style = t.body, modifier = Modifier.weight(1f))
+            Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = C.muted, modifier = Modifier.size(22.dp))
+        }
+        if (open) UsbFixRow(fix, reachable, t, onFix)
+    }
+}
+
+/** It acts on the first tap, so it says what it costs before the tap. */
 @Composable
 private fun UsbFixRow(fix: UsbFix, reachable: Boolean, t: TextStyles, onFix: () -> Unit) {
     val running = fix == UsbFix.Running
-    Column(Modifier.fillMaxWidth().padding(top = SECTION_GAP)) {
-        Box(
+    Column(Modifier.fillMaxWidth()) {
+        Column(
             Modifier.fillMaxWidth().alpha(if (reachable) 1f else .5f)
                 .clickable(enabled = reachable && !running, role = Role.Button, onClick = onFix)
                 .testTag("fix-keyboard-mouse")
-                .padding(horizontal = SIDE, vertical = 14.dp),
+                .padding(horizontal = SIDE, vertical = 10.dp),
         ) {
-            Text(if (running) "Reconnecting keyboard and mouse…" else "Desktop keyboard or mouse not working?", style = t.small)
+            Text(if (running) "Reconnecting keyboard and mouse…" else "Fix desktop keyboard and mouse", style = t.title)
+            Spacer(Modifier.height(2.dp))
+            Text("Resets their USB hub. They drop for about 10 seconds.", style = t.small)
         }
         val message: Pair<String, Color>? = when (fix) {
             is UsbFix.Done -> when {
