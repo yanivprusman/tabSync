@@ -135,9 +135,15 @@ class AndroidPlatform(
     override suspend fun loadSound(): SoundStatus =
         json.decodeFromString(SoundStatus.serializer(), request("api/sound").body)
 
-    override suspend fun setSound(onPhone: Boolean): SoundStatus = json.decodeFromString(
+    override suspend fun setSound(onPhone: Boolean) = postSound("""{"on":$onPhone}""")
+
+    override suspend fun setVolume(percent: Int) = postSound("""{"percent":$percent}""")
+
+    override suspend fun setMuted(muted: Boolean) = postSound("""{"muted":$muted}""")
+
+    private suspend fun postSound(body: String): SoundStatus = json.decodeFromString(
         SoundStatus.serializer(),
-        request("api/sound", "application/json") { it.write("""{"on":$onPhone}""".toByteArray()) }.body,
+        request("api/sound", "application/json") { it.write(body.toByteArray()) }.body,
     )
 
     override fun hasPhotoAccess() = photoAccess()

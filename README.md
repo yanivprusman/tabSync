@@ -11,7 +11,10 @@ Move Chrome tabs between the desktop and the phone.
 The app is one live screen, polling the desktop only while it is visible:
 
 - **Computer sound**: a two-position control, through `desktop/phoneAudio.sh` (`GET /api/sound`
-  reads its status, `POST /api/sound {"on": true|false}` runs `on` or `off`).
+  reads its status, `POST /api/sound {"on": true|false}` runs `on` or `off`), with a volume slider
+  and mute button beneath it. They act on the default output, the same one GNOME's slider moves
+  (`POST /api/sound {"percent": 0..100}` or `{"muted": true|false}`). The slider stops at 100%,
+  because anything above that is digital gain, which clips.
 - **Photos**: a strip of the 12 newest images in `DCIM` (camera and screenshots). The button sends
   the latest in one tap, or whichever were selected; *All photos* opens the system picker for
   older ones. They land in the desktop's `~/Pictures/Screenshots` through

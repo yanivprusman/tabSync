@@ -43,6 +43,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Collections
 import androidx.compose.material.icons.rounded.Computer
@@ -54,6 +56,8 @@ import androidx.compose.material.icons.rounded.Style
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -85,6 +89,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -96,6 +101,7 @@ import kotlinx.datetime.Clock
 import kotlinx.serialization.Serializable
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
+import kotlin.math.roundToInt
 
 // ── data ────────────────────────────────────────────────────────────────────
 
@@ -109,7 +115,7 @@ data class Skipped(val title: String, val reason: String)
 data class TabList(val tabs: List<Tab> = emptyList(), val skipped: List<Skipped> = emptyList())
 
 @Serializable
-data class SoundStatus(val onPhone: Boolean)
+data class SoundStatus(val onPhone: Boolean, val percent: Int, val muted: Boolean)
 
 @Serializable
 data class SentPhoto(val name: String)
@@ -152,6 +158,9 @@ interface Platform {
     suspend fun loadSound(): SoundStatus
     /** Moves the computer's sound; answers with where it ended up. */
     suspend fun setSound(onPhone: Boolean): SoundStatus
+    /** The volume of the output in use, 0 to 100. Answers with the state it ended up in. */
+    suspend fun setVolume(percent: Int): SoundStatus
+    suspend fun setMuted(muted: Boolean): SoundStatus
 
     fun hasPhotoAccess(): Boolean
     suspend fun requestPhotoAccess(): Boolean
@@ -187,7 +196,7 @@ private sealed interface TabsState {
 
 private sealed interface Sound {
     data object Loading : Sound
-    data class Known(val onPhone: Boolean) : Sound
+    data class Known(val status: SoundStatus) : Sound
     data class Failed(val message: String) : Sound
 }
 
@@ -258,14 +267,17 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
     var sound by remember { mutableStateOf<Sound>(Sound.Loading) }
     var soundTarget by remember { mutableStateOf<Boolean?>(null) }
     var soundError by remember { mutableStateOf<String?>(null) }
-    var soundGeneration by remember { mutableStateOf(0) } // a read older than a move is stale
+    var volumeTarget by remember { mutableStateOf<Int?>(null) }
+    var volumeSending by remember { mutableStateOf(false) }
+    var muteTarget by remember { mutableStateOf<Boolean?>(null) }
+    var soundGeneration by remember { mutableStateOf(0) } // a read older than a change is stale
 
     LaunchedEffect(onScreen) {
         if (!onScreen) return@LaunchedEffect
         while (true) {
             val generation = soundGeneration
             val next: Sound? = try {
-                Sound.Known(platform.loadSound().onPhone)
+                Sound.Known(platform.loadSound())
             } catch (e: CancellationException) {
                 throw e
             } catch (e: LoadFailure) {
@@ -274,7 +286,8 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
             } catch (e: Exception) {
                 Sound.Failed(e.message ?: e.toString())
             }
-            if (next != null && soundTarget == null && generation == soundGeneration) sound = next
+            val changing = soundTarget != null || volumeTarget != null || muteTarget != null
+            if (next != null && !changing && generation == soundGeneration) sound = next
             delay(SOUND_POLL_MS)
         }
     }
@@ -286,7 +299,7 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
         soundGeneration++
         scope.launch {
             try {
-                sound = Sound.Known(platform.setSound(onPhone).onPhone)
+                sound = Sound.Known(platform.setSound(onPhone))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -294,6 +307,56 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
             } finally {
                 soundGeneration++
                 soundTarget = null
+            }
+        }
+    }
+
+    // A drag produces far more values than the desktop can apply: one request at a time, and
+    // each one carries wherever the finger is by then, so the sound follows without a backlog.
+    fun changeVolume(percent: Int) {
+        if (percent == volumeTarget) return
+        volumeTarget = percent
+        soundError = null
+        soundGeneration++
+        if (volumeSending) return
+        volumeSending = true
+        scope.launch {
+            try {
+                while (true) {
+                    val sent = volumeTarget ?: break
+                    val status = platform.setVolume(sent)
+                    if (volumeTarget == sent) {
+                        sound = Sound.Known(status)
+                        break
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                soundError = e.message ?: e.toString()
+            } finally {
+                soundGeneration++
+                volumeTarget = null
+                volumeSending = false
+            }
+        }
+    }
+
+    fun changeMute(muted: Boolean) {
+        if (muteTarget != null) return
+        muteTarget = muted
+        soundError = null
+        soundGeneration++
+        scope.launch {
+            try {
+                sound = Sound.Known(platform.setMuted(muted))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                soundError = e.message ?: e.toString()
+            } finally {
+                soundGeneration++
+                muteTarget = null
             }
         }
     }
@@ -376,7 +439,7 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = top + 6.dp, bottom = bottom + 28.dp)) {
             item { TopBar(link, t) }
             item {
-                SoundSection(sound, soundTarget, link != Link.Offline, soundError, t, ::moveSound)
+                SoundSection(sound, soundTarget, volumeTarget, muteTarget, link != Link.Offline, soundError, t, ::moveSound, ::changeVolume, ::changeMute)
             }
             item {
                 PhotosSection(
@@ -521,12 +584,17 @@ private fun TopBar(link: Link, t: TextStyles) {
 private fun SoundSection(
     sound: Sound,
     target: Boolean?,
+    volumeTarget: Int?,
+    muteTarget: Boolean?,
     reachable: Boolean,
     error: String?,
     t: TextStyles,
     onMove: (Boolean) -> Unit,
+    onVolume: (Int) -> Unit,
+    onMute: (Boolean) -> Unit,
 ) {
-    val onPhone = target ?: (sound as? Sound.Known)?.onPhone
+    val status = (sound as? Sound.Known)?.status
+    val onPhone = target ?: status?.onPhone
     val enabled = reachable && target == null && sound is Sound.Known
     Column(Modifier.fillMaxWidth().padding(start = SIDE, end = SIDE, top = 14.dp)) {
         Text("Computer sound plays on", style = t.h2)
@@ -547,6 +615,18 @@ private fun SoundSection(
                 SoundSide("Computer", Icons.Rounded.Computer, onPhone == false, enabled, "sound-on-computer", t, Modifier.weight(1f)) { onMove(false) }
                 SoundSide("This phone", Icons.Rounded.PhoneAndroid, onPhone == true, enabled, "sound-on-phone", t, Modifier.weight(1f)) { onMove(true) }
             }
+        }
+        if (status != null) {
+            Spacer(Modifier.height(6.dp))
+            VolumeRow(
+                percent = volumeTarget ?: status.percent,
+                // Moving the slider unmutes, so it reads as unmuted from the first touch.
+                muted = muteTarget ?: (status.muted && (volumeTarget ?: 0) == 0),
+                enabled = enabled,
+                t = t,
+                onVolume = onVolume,
+                onMute = onMute,
+            )
         }
         val problem = error ?: (sound as? Sound.Failed)?.message
         if (problem != null) {
@@ -578,6 +658,55 @@ private fun SoundSide(
         Icon(icon, null, tint = tint, modifier = Modifier.size(19.dp))
         Spacer(Modifier.width(8.dp))
         Text(label, style = t.side.copy(color = tint))
+    }
+}
+
+@Composable
+private fun VolumeRow(
+    percent: Int,
+    muted: Boolean,
+    enabled: Boolean,
+    t: TextStyles,
+    onVolume: (Int) -> Unit,
+    onMute: (Boolean) -> Unit,
+) {
+    val active = if (muted) C.muted else C.teal
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.size(48.dp).offset(x = (-12).dp).clip(CircleShape)
+                .clickable(enabled = enabled, role = Role.Switch) { onMute(!muted) }
+                .testTag("sound-mute"),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (muted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
+                if (muted) "Unmute the computer" else "Mute the computer",
+                tint = if (muted) C.muted else C.text,
+                modifier = Modifier.size(24.dp),
+            )
+        }
+        Slider(
+            // Something else may have pushed it past 100; the track ends there, the label stays true.
+            value = percent.coerceIn(0, 100).toFloat(),
+            onValueChange = { onVolume(it.roundToInt()) },
+            valueRange = 0f..100f,
+            enabled = enabled,
+            colors = SliderDefaults.colors(
+                thumbColor = active,
+                activeTrackColor = active,
+                inactiveTrackColor = C.surface,
+                disabledThumbColor = active.copy(alpha = .55f),
+                disabledActiveTrackColor = active.copy(alpha = .55f),
+                disabledInactiveTrackColor = C.surface,
+            ),
+            modifier = Modifier.weight(1f).offset(x = (-8).dp).testTag("sound-volume"),
+        )
+        Text(
+            if (muted) "Muted" else "$percent%",
+            style = t.side.copy(color = if (muted) C.muted else C.text),
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(52.dp),
+        )
     }
 }
 
