@@ -141,6 +141,11 @@ class AndroidPlatform(
 
     override suspend fun setMuted(muted: Boolean) = postSound("""{"muted":$muted}""")
 
+    override suspend fun resetUsb(): UsbReset = json.decodeFromString(
+        UsbReset.serializer(),
+        request("api/usb-reset", "application/json") { it.write("{}".toByteArray()) }.body,
+    )
+
     private suspend fun postSound(body: String): SoundStatus = json.decodeFromString(
         SoundStatus.serializer(),
         request("api/sound", "application/json") { it.write(body.toByteArray()) }.body,

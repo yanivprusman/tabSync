@@ -120,6 +120,9 @@ data class SoundStatus(val onPhone: Boolean, val percent: Int, val muted: Boolea
 @Serializable
 data class SentPhoto(val name: String)
 
+@Serializable
+data class UsbReset(val keyboard: Boolean, val mouse: Boolean)
+
 /**
  * Why loading failed — WHICH link broke. "Can't reach the desktop" is only true
  * for [Offline]; for the others the desktop answered and is telling us what is
@@ -172,6 +175,9 @@ interface Platform {
     suspend fun pickPhotos(): List<String>
     /** Copies them to the desktop's Screenshots folder, in order. */
     suspend fun sendPhotos(photos: List<String>, onProgress: (done: Int, total: Int) -> Unit): List<SentPhoto>
+
+    /** Power-cycles the USB port behind the desktop's keyboard and mouse; answers with what came back. */
+    suspend fun resetUsb(): UsbReset
 }
 
 // ── palette (the icon's navy + the travelling tab's teal). Teal only ever means state or action. ──
@@ -205,6 +211,13 @@ private sealed interface PhotoSend {
     data class Sending(val done: Int, val total: Int) : PhotoSend
     data class Sent(val text: String) : PhotoSend
     data class Failed(val message: String) : PhotoSend
+}
+
+private sealed interface UsbFix {
+    data object Idle : UsbFix
+    data object Running : UsbFix
+    data class Done(val result: UsbReset) : UsbFix
+    data class Failed(val message: String) : UsbFix
 }
 
 private enum class Link { Checking, Connected, Offline }
@@ -418,7 +431,24 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
         return photoAccess
     }
 
-    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    // ── keyboard and mouse
+    var usbFix by remember { mutableStateOf<UsbFix>(UsbFix.Idle) }
+
+    fun fixUsb() {
+        if (usbFix == UsbFix.Running) return
+        usbFix = UsbFix.Running
+        scope.launch {
+            usbFix = try {
+                UsbFix.Done(platform.resetUsb())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                UsbFix.Failed(e.message ?: e.toString())
+            }
+        }
+    }
+
+    val top =WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
     PullToRefreshBox(
@@ -530,6 +560,9 @@ private fun Screen(platform: Platform, font: FontFamily, onScreen: Boolean) {
                     }
                 }
             }
+            // Last on the screen, whatever state the tabs are in: rarely needed, but it is needed
+            // exactly when the desktop has no other way to be reached.
+            item { UsbFixRow(usbFix, link != Link.Offline, t, ::fixUsb) }
         }
     }
 }
@@ -1009,6 +1042,35 @@ private fun StayingBehind(skipped: List<Skipped>, open: Boolean, t: TextStyles, 
                     Text(s.title, style = t.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 }
             }
+        }
+    }
+}
+
+/** A quiet line at the very bottom, not a section: it is for the rare day the USB hub hangs. */
+@Composable
+private fun UsbFixRow(fix: UsbFix, reachable: Boolean, t: TextStyles, onFix: () -> Unit) {
+    val running = fix == UsbFix.Running
+    Column(Modifier.fillMaxWidth().padding(top = SECTION_GAP)) {
+        Box(
+            Modifier.fillMaxWidth().alpha(if (reachable) 1f else .5f)
+                .clickable(enabled = reachable && !running, role = Role.Button, onClick = onFix)
+                .testTag("fix-keyboard-mouse")
+                .padding(horizontal = SIDE, vertical = 14.dp),
+        ) {
+            Text(if (running) "Reconnecting keyboard and mouse…" else "Desktop keyboard or mouse not working?", style = t.small)
+        }
+        val message: Pair<String, Color>? = when (fix) {
+            is UsbFix.Done -> when {
+                fix.result.keyboard && fix.result.mouse -> "Keyboard and mouse are back." to C.teal
+                fix.result.keyboard -> "The keyboard is back, but the mouse receiver didn't return." to C.error
+                fix.result.mouse -> "The mouse is back, but the keyboard didn't return." to C.error
+                else -> "Neither came back. Is the USB hub plugged in?" to C.error
+            }
+            is UsbFix.Failed -> fix.message to C.error
+            else -> null
+        }
+        if (message != null) {
+            Text(message.first, style = t.small.copy(color = message.second), modifier = Modifier.padding(horizontal = SIDE))
         }
     }
 }
