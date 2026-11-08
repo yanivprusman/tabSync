@@ -131,44 +131,11 @@ export default function PhoneTabs() {
     setWaking(false);
   }
 
-  async function signOut() {
-    await fetch("/api/session", { method: "DELETE" });
-    window.location.replace("/");
-  }
-
   const notOpen = data?.tabs.filter((t) => !t.desktopId).length ?? 0;
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-5 py-10 sm:py-14">
-      <header className="flex items-center gap-3">
-        {/* eslint-disable-next-line @next/next/no-img-element -- the tab icon, already loaded */}
-        <img src="/icon.svg" alt="" width={40} height={40} className="size-10 rounded-xl" />
-        <div className="min-w-0 flex-1">
-          <h1 className="text-lg font-semibold leading-6">tabSync</h1>
-          <p className="text-sm text-ink-3">Your phone&apos;s tabs, on this computer</p>
-        </div>
-        <button
-          type="button"
-          data-id="refresh-phone-tabs"
-          onClick={() => load()}
-          disabled={loading}
-          title="Refresh"
-          aria-label="Refresh"
-          className="grid size-9 cursor-pointer place-items-center rounded-lg text-ink-3 transition-colors hover:bg-raised hover:text-ink active:bg-line disabled:cursor-default"
-        >
-          <RefreshIcon spinning={loading} />
-        </button>
-        <button
-          type="button"
-          data-id="sign-out"
-          onClick={signOut}
-          className="cursor-pointer rounded-lg px-2.5 py-1.5 text-sm text-ink-3 transition-colors hover:bg-raised hover:text-ink"
-        >
-          Sign out
-        </button>
-      </header>
-
-      <section className="mt-8 overflow-hidden rounded-2xl border border-line bg-surface">
+    <div className="mt-12">
+      <section className="overflow-hidden rounded-2xl border border-line bg-surface">
         <div className="flex items-center gap-3 border-b border-line px-5 py-4">
           <h2 className="font-semibold">Tabs on your phone</h2>
           {data && (
@@ -176,6 +143,17 @@ export default function PhoneTabs() {
               {data.tabs.length}
             </span>
           )}
+          <button
+            type="button"
+            data-id="refresh-phone-tabs"
+            onClick={() => load()}
+            disabled={loading}
+            title="Refresh"
+            aria-label="Refresh tabs"
+            className="grid size-8 cursor-pointer place-items-center rounded-lg text-ink-3 transition-colors hover:bg-raised hover:text-ink active:bg-line disabled:cursor-default"
+          >
+            <RefreshIcon spinning={loading} />
+          </button>
           <div className="flex-1" />
           {data && data.tabs.length > 0 && (
             <button
@@ -239,7 +217,7 @@ export default function PhoneTabs() {
         )}
         {updatedAt && <UpdatedAgo at={updatedAt} />}
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -359,7 +337,7 @@ function UpdatedAgo({ at }: { at: number }) {
   return <span className="shrink-0 tabular-nums">{s < 10 ? "Updated just now" : `Updated ${s < 60 ? `${s}s` : `${Math.round(s / 60)}m`} ago`}</span>;
 }
 
-function RefreshIcon({ spinning }: { spinning: boolean }) {
+export function RefreshIcon({ spinning }: { spinning: boolean }) {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={spinning ? "animate-spin" : ""} aria-hidden>
       <path d="M21 12a9 9 0 1 1-2.64-6.36" />

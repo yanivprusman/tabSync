@@ -5,6 +5,16 @@ Move Chrome tabs between the desktop and the phone.
 - **Desktop → phone**: the **TabSync** Android app (`mobile/`). It lists the desktop
   Chrome's open tabs (from `GET /api/tabs` on this backend, `10.7.0.2:3185` over
   WireGuard) and opens them all — or one — in the phone's Chrome, each in its own tab.
+- **Photos, phone → desktop, on the desktop page** (first section): the phone's newest
+  DCIM photos as a grid, grouped by day, using the phone's own MediaStore thumbnails
+  (`GET /api/phone-photos`, `/thumb?id=&v=`, cached in `~/.cache/tabsync/thumbs`). Click to
+  select, then *Copy N to computer* — or *Copy latest*. Copies run one at a time with a live
+  progress bar (`POST /api/phone-photos/copy {id}` streams NDJSON) because adb to the phone
+  is slow over WireGuard (~0.35 MB/s; a 30 MB photo takes ~80 s). They land in
+  `~/Pictures/Screenshots` like photos the phone app sends, never replacing a file. A copied
+  photo gets a check and *Open* (default viewer), *Copy image* (clipboard, as PNG) and
+  *Folder* (Files, selected). All in `lib/phonePhotos.mjs`; photos are addressed by
+  MediaStore id, never by path.
 - **Phone → desktop**: the **desktop page** at `http://localhost:3185/` (app grid:
   *tabSync*, `scripts/open-desktop.sh`, which opens it already signed in). It lists the
   phone's Chrome tabs, marks the ones already open here, and opens one or all of them in
