@@ -1,3 +1,29 @@
 @import "tailwindcss";
 @source "../../../automateLinux/packages/feedback-lib/src";
 @source "../../../automateLinux/packages/feedback-lib-launcher/src";
+
+/* The desktop page wears the phone app's colours: deep navy, teal for action. */
+@theme {
+  --color-bg: #0b1033;
+  --color-surface: #141b4a;
+  --color-raised: #1a2259;
+  --color-line: #232c6b;
+  --color-line-strong: #34408c;
+  --color-ink: #eef1ff;
+  --color-ink-2: #c9d4f5;
+  --color-ink-3: #a5aee0;
+  --color-accent: #5ee6d3;
+  --color-accent-hover: #7af0df;
+  --color-accent-ink: #05222b;
+  --color-danger: #ff9a8f;
+}
+
+html {
+  color-scheme: dark;
+}
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Hebrew", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

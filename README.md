@@ -5,8 +5,16 @@ Move Chrome tabs between the desktop and the phone.
 - **Desktop → phone**: the **TabSync** Android app (`mobile/`). It lists the desktop
   Chrome's open tabs (from `GET /api/tabs` on this backend, `10.7.0.2:3185` over
   WireGuard) and opens them all — or one — in the phone's Chrome, each in its own tab.
-- **Phone → desktop**: `phoneTabsToDesktop [--dry-run]` in any terminal
-  (`scripts/phone-to-desktop.mjs`, via adb + phone Chrome's DevTools socket).
+- **Phone → desktop**: the **desktop page** at `http://localhost:3185/` (app grid:
+  *tabSync*, `scripts/open-desktop.sh`, which opens it already signed in). It lists the
+  phone's Chrome tabs, marks the ones already open here, and opens one or all of them in
+  the desktop's Chrome (*Show* brings an already-open one to the front). It polls every
+  15 s while on screen. If phone Chrome hasn't been on screen since it started, its tabs
+  can't be read; the page says so and offers to bring Chrome to the front on the phone —
+  it never does that by itself. Same thing from a terminal: `phoneTabsToDesktop [--dry-run]`
+  (`scripts/phone-to-desktop.mjs`). Both use `lib/phoneTabs.mjs` (adb + phone Chrome's
+  DevTools socket); routes `GET /api/phone-tabs[?wake=1]`, `POST /api/phone-tabs/open {urls}`,
+  `POST /api/phone-tabs/show {id}`.
 
 The app is one live screen, polling the desktop only while it is visible:
 
@@ -31,6 +39,13 @@ Dashboard ports come from the daemon (`getPort dashboard-dev|prod`).
 
 Tabs are read with DevTools `/json/list` and opened with `PUT /json/new` — never
 `setDownloadBehavior` (it breaks Chrome's download buttons).
+
+## Access
+One secret, `TABSYNC_API_TOKEN`. The phone sends it as a bearer token; a browser signs in
+once (the access code is the token, or a timed link from `node scripts/make-link.mjs
+[minutes] [origin]`) and holds a cookie that is an HMAC of it — rotating the token signs
+every browser out. Cookie-authenticated writes must carry the page's own `Origin`.
+`proxy.ts` only picks the screen (page vs sign-in); every route calls `authorize()`.
 
 ## Config (gitignored)
 - `.env.local`: `TABSYNC_API_TOKEN=<secret>`

@@ -4,7 +4,7 @@ import FeedbackChatMount from "./FeedbackChatMount";
 
 export const metadata: Metadata = {
   title: "tabSync",
-  description: "tabSync — open all your desktop Chrome tabs on the phone (and phoneTabsToDesktop for the other way)",
+  description: "tabSync — move Chrome tabs between the desktop and the phone",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
